@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BlurBerry AI — Privacy Filter</title>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+<!-- Header -->
+<header>
+  <div class="logo">
+    <div class="logo-icon">🫐</div>
+    BlurBerry <span>AI</span>
+  </div>
+  <div id="statusPill" class="status-pill">
+    <div class="status-dot"></div>
+    <span id="statusText">checking...</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- ── Video Panel ── -->
+  <div class="video-panel">
+    <div class="video-toolbar">
+      <button class="btn btn-primary" id="startBtn" onclick="startCamera()">▶ Start Camera</button>
+      <button class="btn btn-danger"  id="stopBtn"  onclick="stopCamera()"   style="display:none">■ Stop</button>
+      <button class="btn btn-ghost"   id="snapBtn"  onclick="takeSnapshot()" style="display:none">📷 Snapshot</button>
+      <span id="fpsLabel"></span>
+    </div>
+
+    <div class="video-container">
+      <video id="videoEl" autoplay playsinline muted></video>
+      <canvas id="canvasOutput"></canvas>
+      <canvas id="canvasCapture" style="display:none"></canvas>
+
+      <!-- Placeholder shown before camera starts -->
+      <div class="video-placeholder" id="placeholder">
+        <div class="icon">🫐</div>
+        <p>Click "Start Camera" to begin<br>real-time privacy filtering</p>
+      </div>
+
+      <!-- Enroll countdown overlay — shown on top of video when E is pressed -->
+      <div class="enroll-overlay" id="enrollOverlay">
+        <div class="enroll-ring"></div>
+        <div class="enroll-countdown" id="enrollCountdown">3</div>
+        <div class="enroll-overlay-label">Hold still…</div>
+      </div>
+
+      <div class="fps-badge" id="fpsBadge">— fps</div>
+    </div>
+
+    <!-- E-key hint shown below video once camera is live -->
+    <div class="enroll-hint" id="enrollHint" style="display:none">
+      Press <kbd>E</kbd> to enroll your face — your face won't be blurred
+    </div>
+  </div>
+
+  <!-- ── Sidebar ── -->
+  <div class="sidebar">
+
+    <!-- Stats -->
+    <div class="section">
+      <div class="section-title">Session Stats</div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="statFaces">0</div>
+          <div class="stat-label">Faces Blurred</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="statPlates">0</div>
+          <div class="stat-label">Plates</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="statPii">0</div>
+          <div class="stat-label">Text PII</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="statNsfw">0</div>
+          <div class="stat-label">NSFW</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Enroll panel -->
+    <div class="section">
+      <div class="section-title">Owner Face</div>
+
+      <!-- Preview shown after enroll -->
+      <div class="enroll-preview-box" id="enrollPreviewBox">
+        <img id="enrollPreview" />
+        <div class="enroll-preview-label" id="enrollPreviewLabel"></div>
+        <button class="btn btn-ghost" style="width:100%;margin-top:8px" onclick="resetEnroll()">
+          🔄 Re-enroll
+        </button>
+      </div>
+
+      <!-- Default state before enroll -->
+      <div class="enroll-idle" id="enrollIdle">
+        <div class="enroll-key-hint">
+          <span class="key-badge">E</span>
+          <span>Press <strong>E</strong> while the camera<br>is live to scan your face</span>
+        </div>
+        <p class="enroll-sub" id="enrollSub">Start the camera first</p>
+      </div>
+    </div>
+
+    <!-- Blur Controls -->
+    <div class="section">
+      <div class="section-title">Blur Modules</div>
+
+      <div class="toggle-row">
+        <span class="toggle-label">Faces <span class="tag">insightface</span></span>
+        <label class="switch"><input type="checkbox" id="tog_blur_faces" checked onchange="updateConfig()"><span class="slider"></span></label>
+      </div>
+      <div class="toggle-row">
+        <span class="toggle-label">License Plates <span class="tag">yolo</span></span>
+        <label class="switch"><input type="checkbox" id="tog_blur_plates" checked onchange="updateConfig()"><span class="slider"></span></label>
+      </div>
+      <div class="toggle-row">
+        <span class="toggle-label">ID / Credit Cards <span class="tag">yolo</span></span>
+        <label class="switch"><input type="checkbox" id="tog_blur_cards" checked onchange="updateConfig()"><span class="slider"></span></label>
+      </div>
+      <div class="toggle-row">
+        <span class="toggle-label">NSFW Regions <span class="tag">nudenet</span></span>
+        <label class="switch"><input type="checkbox" id="tog_blur_nsfw" checked onchange="updateConfig()"><span class="slider"></span></label>
+      </div>
+      <div class="toggle-row">
+        <span class="toggle-label">Text PII <span class="tag">paddleocr</span></span>
+        <label class="switch"><input type="checkbox" id="tog_blur_text_pii" checked onchange="updateConfig()"><span class="slider"></span></label>
+      </div>
+
+      <div class="range-row" style="margin-top:14px">
+        <div class="range-label">
+          <span>Blur Strength</span>
+          <span id="blurVal">51</span>
+        </div>
+        <input type="range" id="blurStrength" min="11" max="99" step="2" value="51"
+               oninput="document.getElementById('blurVal').textContent=this.value"
+               onchange="updateConfig()">
+      </div>
+    </div>
+
+    <!-- Detection Log -->
+    <div class="section">
+      <div class="section-title">Detection Log</div>
+      <div class="log-box" id="logBox">
+        <div class="log-entry">
+          <span class="log-time">--:--:--</span>
+          <span>Waiting for stream...</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<div id="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

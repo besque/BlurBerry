@@ -150,3 +150,14 @@ class VideoLoop:
 
     def stop(self):
         self.running = False
+
+    def run_headless(self):
+        """Keep pipeline alive without opening an OpenCV window.
+        process_frame() is called on demand by the web server."""
+        self.running = True
+        try:
+            while self.running:
+             import time
+             time.sleep(1)
+        except KeyboardInterrupt:
+            self.running = False    
