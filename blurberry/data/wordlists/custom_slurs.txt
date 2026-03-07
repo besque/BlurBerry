@@ -1,0 +1,7 @@
+password
+otp
+cvv
+pin number
+secret key
+api key
+private key
