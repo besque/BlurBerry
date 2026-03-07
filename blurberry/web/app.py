@@ -1,3 +1,18 @@
+"""
+BlurBerry AI — FastAPI Web Server
+Person 4 owns this file.
+
+Endpoints:
+  GET  /                  → serve index.html
+  POST /enroll            → enroll a face (multipart image upload)
+  POST /process_frame     → process a single JPEG frame, return blurred JPEG
+  GET  /status            → pipeline health check
+  POST /config            → update PipelineConfig at runtime
+  GET  /audio/events      → drain audio PII event queue for UI display
+  GET  /audio/transcript  → latest live transcript string
+  WebSocket /ws/stream    → real-time frame streaming
+"""
+
 import os
 import sys
 import time
@@ -31,9 +46,19 @@ app.add_middleware(
 )
 
 # ── Static files ──────────────────────────────────────────────────────────────
+# Automatically serves React build if frontend/dist exists, else falls back to static/
+REACT_DIST = os.path.join(os.path.dirname(__file__), "frontend", "dist")
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-os.makedirs(STATIC_DIR, exist_ok=True)
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+if os.path.exists(REACT_DIST):
+    app.mount("/assets", StaticFiles(directory=os.path.join(REACT_DIST, "assets")), name="assets")
+    SERVE_REACT = True
+    print("[app] Serving React build from frontend/dist")
+else:
+    os.makedirs(STATIC_DIR, exist_ok=True)
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    SERVE_REACT = False
+    print("[app] Serving plain HTML from static/")
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
 class ConfigUpdate(BaseModel):
@@ -63,12 +88,16 @@ def _encode_frame(frame: np.ndarray, quality: int = 85) -> bytes:
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    """Serve the main UI."""
-    html_path = os.path.join(STATIC_DIR, "index.html")
+    """Serve the main UI — React build or plain HTML fallback."""
+    if SERVE_REACT:
+        html_path = os.path.join(REACT_DIST, "index.html")
+    else:
+        html_path = os.path.join(STATIC_DIR, "index.html")
+
     if os.path.exists(html_path):
-        with open(html_path, encoding="utf-8") as f:
-         return f.read()
-    return HTMLResponse("<h1>BlurBerry AI</h1><p>index.html not found in static/.</p>")
+        with open(html_path) as f:
+            return f.read()
+    return HTMLResponse("<h1>BlurBerry AI</h1><p>index.html not found.</p>")
 
 
 @app.get("/status")
