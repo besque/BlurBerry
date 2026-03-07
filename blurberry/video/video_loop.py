@@ -10,7 +10,6 @@ from blurberry.video.tracker import MultiObjectTracker
 
 OUTPUT_DELAY_SECONDS = AV_DELAY_SECONDS
 
-
 class VideoLoop:
     def __init__(self, config: PipelineConfig, source: int = 0, debug: bool = False):
         self.config = config
@@ -19,7 +18,7 @@ class VideoLoop:
         self.running = False
 
         self.face_pipeline = FacePipeline(config)
-        self.tracker = MultiObjectTracker(max_age=30, min_hits=2)
+        self.tracker = MultiObjectTracker(max_age=45, min_hits=1, iou_threshold=0.25)
         self.external_detectors: List[Callable] = []
 
         self.current_output_frame: Optional[bytes] = None

@@ -45,8 +45,8 @@ class KalmanBoxTracker:
         self.kf.R[2:, 2:] *= 10.
         self.kf.P[4:, 4:] *= 1000.
         self.kf.P *= 10.
-        self.kf.Q[-1, -1] *= 0.01
-        self.kf.Q[4:, 4:] *= 0.01
+        self.kf.Q[-1, -1] *= 0.1
+        self.kf.Q[4:, 4:] *= 0.1
         x1, y1, x2, y2 = bbox
         cx = (x1 + x2) / 2
         cy = (y1 + y2) / 2
@@ -86,7 +86,7 @@ class KalmanBoxTracker:
 
 
 class MultiObjectTracker:
-    def __init__(self, max_age=30, min_hits=2, iou_threshold=0.3):
+    def __init__(self, max_age=60, min_hits=1, iou_threshold=0.15):
         self.max_age = max_age
         self.min_hits = min_hits
         self.iou_threshold = iou_threshold
