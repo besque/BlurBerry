@@ -1,0 +1,11 @@
+# Environments
+venv/
+env/
+__pycache__/
+*.pyc
+
+# Project specific
+models/
+enrolled_faces/
+*.pkl
+.DS_Store
