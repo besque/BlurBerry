@@ -115,14 +115,14 @@ class VideoLoop:
                     except Exception as e:
                         print(f"[VideoLoop] Detector error: {e}")
                 # Update tracker with object detections
-                self.tracker.update(self._last_object_events)
                 self.last_object_detection_frame = self.frame_id
+                tracked_objects = self.tracker.update(self._last_object_events)
             else:
                 # Let tracker predict forward for objects
-                self.tracker.update([])
+                tracked_objects = self.tracker.update([])
 
             # Combine: face events (fresh every frame) + tracked object events
-            tracked_objects = self.tracker.update([])  # current tracked positions
+            # tracked_objects = self.tracker.update([])  # current tracked positions
             all_events = face_events + tracked_objects
 
             # ── Blur ──
