@@ -9,3 +9,7 @@ models/
 enrolled_faces/
 *.pkl
 .DS_Store
+
+models/*.pt
+models/*.onnx
+models/*.bin
