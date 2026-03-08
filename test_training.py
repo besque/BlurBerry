@@ -21,12 +21,10 @@ while True:
     # Simulate T3 firing every 5 frames
     if frame_id % 5 == 0:
         detections = det.detect(frame, frame_id)
-        if detections:
-            tracker.update_from_detections(detections)
+        tracker.update(detections)
 
     # T4 runs every frame
-    tracker.predict_all()
-    boxes = tracker.get_active_boxes(frame_id)
+    boxes = tracker.update([])
 
     out = apply_blurs(frame, boxes, config)
 
