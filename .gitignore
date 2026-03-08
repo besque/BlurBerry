@@ -13,3 +13,4 @@ enrolled_faces/
 models/*.pt
 models/*.onnx
 models/*.bin
+node_modules/

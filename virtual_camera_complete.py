@@ -52,14 +52,14 @@ def complete_virtual_camera():
     print("\n🎥 Output: OBS Virtual Camera (for Zoom/Discord)")
     print("="*60)
 
-    # Configuration with all privacy features enabled
+    # Configuration with all privacy features enabled (tuned for smooth virtual cam / OBS)
     config = PipelineConfig(
         blur_faces=True,           # Enable face blur (whitelisted faces won't be blurred)
         blur_plates=True,          # Blur license plates
         blur_cards=True,           # Blur credit cards
         blur_nsfw=True,            # Blur NSFW content
         blur_text_pii=True,        # Blur text PII
-        detection_cadence=10,      # Run object detection every 10 frames
+        detection_cadence=12,      # Run object detection every 12 frames (smoother FPS)
         blur_strength=51,          # Gaussian blur kernel size
         face_similarity_threshold=0.38  # Face recognition threshold
     )

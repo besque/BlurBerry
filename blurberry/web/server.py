@@ -3,9 +3,16 @@ BlurBerry Web Server
 Phases: ready → collecting (E) → enrolled → streaming (S)
 Run:    python blurberry/web/server.py
 Open:   http://localhost:5000
+
+Key fixes vs previous version:
+  1. Object detection runs in a BACKGROUND THREAD — never blocks the main loop
+  2. MultiObjectTracker wired in — blur follows moving objects between YOLO runs
+  3. Face suppression — faces inside detected card boxes are not blurred separately
+     (fixes Aadhaar card printing the face blur instead of the full card blur)
 """
 
-import sys, os, time, threading, pickle, cv2, numpy as np
+import sys, os, time, threading, queue, pickle, cv2
+import numpy as np
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
@@ -23,10 +30,9 @@ _lock    = threading.Lock()
 _jpeg    = None
 _running = False
 
-# phases: idle | ready | collecting | enrolled | streaming
 _state = {
     'phase':           'idle',
-    'enroll_progress': 0,   # 0-100
+    'enroll_progress': 0,
     'enroll_msg':      '',
 }
 
@@ -37,7 +43,6 @@ _settings = {
     'nsfw':   True,
 }
 
-# Events set by keypress route to unblock waiting threads
 _evt_start_collect = threading.Event()
 _evt_start_stream  = threading.Event()
 
@@ -70,6 +75,20 @@ def _encode_jpeg(frame):
     _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 82])
     return buf.tobytes()
 
+def _face_inside_card(face_bbox, card_boxes):
+    """
+    Returns True if the centre of face_bbox falls inside any card box.
+    Used to suppress InsightFace blurring the printed photo on an Aadhaar card
+    instead of blurring the whole card.
+    """
+    fx1, fy1, fx2, fy2 = face_bbox
+    fcx = (fx1 + fx2) / 2
+    fcy = (fy1 + fy2) / 2
+    for (cx1, cy1, cx2, cy2) in card_boxes:
+        if cx1 <= fcx <= cx2 and cy1 <= fcy <= cy2:
+            return True
+    return False
+
 # ── Init ───────────────────────────────────────────────────────────────────────
 
 def _init_camera():
@@ -90,19 +109,19 @@ def _init_face_app():
     except Exception as e:
         print(f'[BlurBerry] insightface unavailable: {e}')
 
-# ── Phase 1: ready — show live preview, wait for E ────────────────────────────
+# ── Phase 1: ready ─────────────────────────────────────────────────────────────
 
 def _ready_phase():
+    global _jpeg
     with _lock:
         _state['phase'] = 'ready'
 
-    # Produce first frame so /video_feed has something to send as soon as client connects
     ok, frame = _cap.read()
     if ok:
         with _lock:
             _jpeg = _encode_jpeg(frame)
 
-    print('[BlurBerry] Ready — waiting for E to start enrollment')
+    print('[BlurBerry] Ready — press E in the UI to start enrollment')
     _evt_start_collect.clear()
 
     while not _evt_start_collect.wait(timeout=0.05):
@@ -117,19 +136,18 @@ def _ready_phase():
 # ── Phase 2: collecting embeddings ────────────────────────────────────────────
 
 def _collect_phase():
-    global _owner_embeds
+    global _owner_embeds, _jpeg
 
     with _lock:
         _state['phase']           = 'collecting'
         _state['enroll_progress'] = 0
         _state['enroll_msg']      = 'Look at the camera'
 
-    # Always fresh
     if os.path.exists(ENROLLED_FILE):
         os.remove(ENROLLED_FILE)
     _owner_embeds = []
 
-    collected  = []
+    collected   = []
     enroll_tick = 0
     print(f'[Enroll] Collecting {ENROLL_FRAMES} embeddings...')
 
@@ -142,15 +160,15 @@ def _collect_phase():
         display = frame.copy()
         embed   = None
 
-        # Run detection every other frame for speed
         if _face_app and enroll_tick % 2 == 0:
             try:
-                small  = cv2.resize(frame, (640, 360))
-                faces  = _face_app.get(small)
+                small = cv2.resize(frame, (640, 360))
+                faces = _face_app.get(small)
                 if faces:
                     sx = frame.shape[1] / 640
                     sy = frame.shape[0] / 360
-                    f  = max(faces, key=lambda x: (x.bbox[2]-x.bbox[0])*(x.bbox[3]-x.bbox[1]))
+                    f  = max(faces,
+                             key=lambda x: (x.bbox[2]-x.bbox[0])*(x.bbox[3]-x.bbox[1]))
                     embed = f.normed_embedding
                     collected.append(embed.copy())
                     x1 = int(f.bbox[0]*sx); y1 = int(f.bbox[1]*sy)
@@ -161,14 +179,14 @@ def _collect_phase():
         enroll_tick += 1
 
         pct = int(len(collected) / ENROLL_FRAMES * 100)
-        msg = 'No face detected — move closer' if embed is None else f'{len(collected)}/{ENROLL_FRAMES}'
+        msg = ('No face detected — move closer'
+               if embed is None else f'{len(collected)}/{ENROLL_FRAMES}')
 
         with _lock:
             _state['enroll_progress'] = pct
             _state['enroll_msg']      = msg
             _jpeg = _encode_jpeg(display)
 
-    # Save
     with open(ENROLLED_FILE, 'wb') as f:
         pickle.dump(collected, f)
     _owner_embeds = collected
@@ -179,10 +197,9 @@ def _collect_phase():
         _state['enroll_progress'] = 100
         _state['enroll_msg']      = 'Enrolled!'
 
-    print('[BlurBerry] Enrolled — waiting for S to start stream')
+    print('[BlurBerry] Enrolled — press S in the UI to start stream')
     _evt_start_stream.clear()
 
-    # Keep showing live preview while waiting for S
     while not _evt_start_stream.wait(timeout=0.05):
         ok, frame = _cap.read()
         if not ok:
@@ -200,6 +217,7 @@ def _streaming_thread():
     with _lock:
         _state['phase'] = 'streaming'
 
+    # ── Virtual camera ──
     vcam = None
     try:
         import pyvirtualcam
@@ -208,6 +226,7 @@ def _streaming_thread():
     except Exception as e:
         print(f'[BlurBerry] Virtual camera skipped: {e}')
 
+    # ── Object detector ──
     obj_det = None
     try:
         from blurberry.video.object_detector import PlateCardDetector
@@ -216,6 +235,7 @@ def _streaming_thread():
     except Exception as e:
         print(f'[BlurBerry] Object detector skipped: {e}')
 
+    # ── NSFW detector ──
     nsfw_detect = None
     try:
         from blurberry.video.nsfw_detector import make_nsfw_detector
@@ -224,6 +244,11 @@ def _streaming_thread():
     except Exception as e:
         print(f'[BlurBerry] NSFW detector skipped: {e}')
 
+    # ── Tracker ──
+    from blurberry.video.tracker import MultiObjectTracker
+    tracker = MultiObjectTracker(max_age=8, min_hits=1, iou_threshold=0.15)
+
+    # ── MediaPipe fallback if InsightFace unavailable ──
     mp_face = None
     if not _face_app:
         try:
@@ -233,9 +258,59 @@ def _streaming_thread():
         except Exception:
             pass
 
-    frame_id    = 0
-    cached_objs = []
-    cached_nsfw = []
+    # ────────────────────────────────────────────────────────────────────────
+    # Background object detection thread
+    # YOLO is slow (~200-400ms on CPU). Running it on the main loop thread
+    # blocks everything and causes the 1-second delay before blur appears.
+    # Fix: put it in its own thread. Main loop feeds frames in, reads results out.
+    # ────────────────────────────────────────────────────────────────────────
+    _det_queue      = queue.Queue(maxsize=1)   # only keep the freshest frame
+    _det_results    = {'objs': [], 'nsfw': [], 'fire': 0}
+    _det_results_lk = threading.Lock()
+
+    def _detection_worker():
+        frame_counter = 0
+        while _running:
+            try:
+                frame_id, frame = _det_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+
+            new_objs  = []
+            new_nsfw  = []
+
+            if obj_det:
+                try:
+                    new_objs = obj_det.detect(frame, frame_id)
+                except Exception as e:
+                    print(f'[ObjDet] {e}')
+
+            # NSFW runs less often — every 3rd time the worker fires
+            frame_counter += 1
+            if nsfw_detect and frame_counter % 3 == 0:
+                try:
+                    new_nsfw = nsfw_detect(frame, frame_id)
+                except Exception as e:
+                    print(f'[NSFW] {e}')
+
+            with _det_results_lk:
+                _det_results['objs'] = new_objs
+                _det_results['nsfw'] = new_nsfw
+                _det_results['fire'] += 1
+
+    det_thread = threading.Thread(
+        target=_detection_worker, daemon=True, name='ObjDetWorker'
+    )
+    det_thread.start()
+    print('[BlurBerry] Object detection worker started')
+
+    # ── Main streaming loop ──
+    frame_id        = 0
+    last_fire       = 0
+    cached_nsfw     = []
+    FACE_W, FACE_H  = 640, 360      # resolution for face detection
+    OBJ_CADENCE     = 3             # feed a frame to detection worker every N frames
+
     print('[BlurBerry] Streaming...')
 
     while _running:
@@ -244,70 +319,121 @@ def _streaming_thread():
             time.sleep(0.01)
             continue
 
+        frame_id += 1
+
         with _lock:
             s = dict(_settings)
 
         output = frame.copy()
+        ih, iw = frame.shape[:2]
+        sx     = iw / FACE_W
+        sy     = ih / FACE_H
 
+        # ── Feed frame to background detection worker ──
+        # put_nowait drops the frame if the worker is still busy — that's fine,
+        # we'd rather drop a frame than block the main loop
+        if frame_id % OBJ_CADENCE == 0 and (obj_det or nsfw_detect):
+            try:
+                _det_queue.put_nowait((frame_id, frame.copy()))
+            except queue.Full:
+                pass   # worker still running previous frame — skip
+
+        # ── Collect latest detection results ──
+        with _det_results_lk:
+            current_fire = _det_results['fire']
+            latest_objs  = list(_det_results['objs'])
+            latest_nsfw  = list(_det_results['nsfw'])
+
+        # ── Update tracker only when worker fired new results ──
+        if current_fire != last_fire:
+            tracker.update_from_detections(latest_objs)
+            cached_nsfw = latest_nsfw
+            last_fire   = current_fire
+
+        # ── Advance Kalman filters every frame ──
+        # This makes blur boxes follow movement smoothly between YOLO runs.
+        # Without this, boxes stay frozen at their last detected position.
+        tracker.predict_all()
+        tracked_objs = tracker.get_active_boxes(frame_id)
+
+        # ── Build card box list for face suppression ──
+        # If a card is detected, we blur the full card. We must NOT also blur
+        # the printed face on the card via InsightFace — that would be redundant
+        # and means the card number stays visible. Suppress any face whose centre
+        # falls inside a card bounding box.
+        card_boxes = [
+            ev.bbox for ev in tracked_objs
+            if ev.type in ('card', 'plate')
+        ]
+
+        # ── Face detection and blur (runs every frame) ──
         if s['faces']:
             if _face_app:
                 try:
-                    for f in _face_app.get(frame):
+                    small = cv2.resize(frame, (FACE_W, FACE_H))
+                    for f in _face_app.get(small):
+                        # Scale bbox back to full resolution
+                        x1 = int(f.bbox[0] * sx) - 20
+                        y1 = int(f.bbox[1] * sy) - 20
+                        x2 = int(f.bbox[2] * sx) + 20
+                        y2 = int(f.bbox[3] * sy) + 20
+                        face_bbox = (x1, y1, x2, y2)
+
+                        # Skip if this face is inside a detected card box
+                        if _face_inside_card(face_bbox, card_boxes):
+                            continue
+
                         if not _is_owner(f.normed_embedding):
-                            x1,y1,x2,y2 = [int(v) for v in f.bbox]
-                            _blur_region(output, x1-20, y1-20, x2+20, y2+20, 71)
+                            _blur_region(output, x1, y1, x2, y2, 71)
                 except Exception:
                     pass
+
             elif mp_face:
                 try:
                     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     res = mp_face.process(rgb)
                     if res.detections:
-                        ih, iw = frame.shape[:2]
                         for det in res.detections:
                             bb = det.location_data.relative_bounding_box
-                            _blur_region(output,
-                                int(bb.xmin*iw)-20, int(bb.ymin*ih)-20,
-                                int((bb.xmin+bb.width)*iw)+20,
-                                int((bb.ymin+bb.height)*ih)+20, 71)
+                            x1 = int(bb.xmin * iw) - 20
+                            y1 = int(bb.ymin * ih) - 20
+                            x2 = int((bb.xmin + bb.width)  * iw) + 20
+                            y2 = int((bb.ymin + bb.height) * ih) + 20
+                            face_bbox = (x1, y1, x2, y2)
+                            if _face_inside_card(face_bbox, card_boxes):
+                                continue
+                            _blur_region(output, x1, y1, x2, y2, 71)
                 except Exception:
                     pass
 
-        if frame_id % 10 == 0 and obj_det:
-            try:
-                cached_objs = obj_det.detect(frame, frame_id)
-            except Exception:
-                cached_objs = []
-
-        if frame_id % 15 == 0 and nsfw_detect:
-            try:
-                cached_nsfw = nsfw_detect(frame, frame_id)
-            except Exception:
-                cached_nsfw = []
-
-        for ev in cached_objs:
+        # ── Object blur (plates and cards from tracker) ──
+        for ev in tracked_objs:
             if ev.type == 'plate' and s['plates']:
-                _blur_region(output, *ev.bbox)
+                _blur_region(output, *ev.bbox, strength=61)
             elif ev.type == 'card' and s['cards']:
-                _blur_region(output, *ev.bbox)
+                _blur_region(output, *ev.bbox, strength=71)
 
+        # ── NSFW blur ──
         if s['nsfw']:
             for ev in cached_nsfw:
-                _blur_region(output, *ev.bbox)
+                _blur_region(output, *ev.bbox, strength=71)
 
+        # ── Publish frame ──
         with _lock:
             _jpeg = _encode_jpeg(output)
 
+        # ── Virtual camera ──
         if vcam:
             try:
-                rgb_out = cv2.cvtColor(cv2.resize(output, (1280,720)), cv2.COLOR_BGR2RGB)
-                vcam.send(rgb_out)
+                out_send = (cv2.resize(output, (1280, 720))
+                            if output.shape[1] != 1280 or output.shape[0] != 720
+                            else output)
+                vcam.send(cv2.cvtColor(out_send, cv2.COLOR_BGR2RGB))
                 vcam.sleep_until_next_frame()
             except Exception:
                 pass
 
-        frame_id += 1
-
+    # ── Cleanup ──
     if vcam:
         vcam.close()
     with _lock:
@@ -317,13 +443,12 @@ def _streaming_thread():
 # ── Entry ──────────────────────────────────────────────────────────────────────
 
 def _start_thread():
-    global _running
+    global _running, _jpeg
     _running = True
     if not _init_camera():
         print('[BlurBerry] ERROR: cannot open webcam')
         _running = False
         return
-    # Show first frame immediately so /video_feed has something while face app loads
     with _lock:
         _state['phase'] = 'starting'
     ok, frame = _cap.read()
@@ -339,7 +464,7 @@ def _start_thread():
 def index():
     r = send_from_directory(STATIC, 'index.html')
     r.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
-    r.headers['Pragma'] = 'no-cache'
+    r.headers['Pragma']        = 'no-cache'
     return r
 
 @app.route('/start', methods=['POST'])
@@ -362,7 +487,7 @@ def keypress(key):
     if k == 's' and phase == 'enrolled':
         _evt_start_stream.set()
         return jsonify({'ok': True, 'action': 'start_stream'})
-    return jsonify({'ok': False, 'reason': f'key {k} not valid in phase {phase}'})
+    return jsonify({'ok': False, 'reason': f'key {k!r} not valid in phase {phase!r}'})
 
 @app.route('/toggle/<feature>', methods=['POST'])
 def toggle(feature):
@@ -377,11 +502,11 @@ def toggle(feature):
 def get_status():
     with _lock:
         return jsonify({
-            'running':          _running,
-            'phase':            _state['phase'],
-            'enroll_progress':  _state['enroll_progress'],
-            'enroll_msg':       _state['enroll_msg'],
-            'settings':         dict(_settings),
+            'running':         _running,
+            'phase':           _state['phase'],
+            'enroll_progress': _state['enroll_progress'],
+            'enroll_msg':      _state['enroll_msg'],
+            'settings':        dict(_settings),
         })
 
 @app.route('/stop', methods=['POST'])
@@ -403,7 +528,7 @@ def _gen():
 def video_feed():
     r = Response(_gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
     r.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
-    r.headers['Pragma'] = 'no-cache'
+    r.headers['Pragma']        = 'no-cache'
     return r
 
 if __name__ == '__main__':

@@ -1,0 +1,130 @@
+.enroll-face-page {
+  position: relative;
+  z-index: 2;
+  min-height: calc(100vh - 65px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px 24px;
+  text-align: center;
+}
+
+.enroll-face-title {
+  font-family: var(--sans);
+  font-size: clamp(1.75rem, 4vw, 2.25rem);
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 12px;
+  letter-spacing: -0.02em;
+}
+
+.enroll-face-subtitle {
+  font-size: 0.95rem;
+  color: var(--muted);
+  max-width: 420px;
+  margin-bottom: 36px;
+  line-height: 1.5;
+}
+
+.enroll-face-icon-wrap {
+  margin-bottom: 28px;
+}
+
+.enroll-face-icon {
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  margin: 0 auto;
+}
+
+.enroll-face-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 28px;
+  border-radius: 12px;
+  border: none;
+  background: linear-gradient(90deg, #5b21b6, #6366f1);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.2s, transform 0.15s;
+  margin-bottom: 20px;
+}
+
+.enroll-face-cta:hover {
+  opacity: 0.95;
+  transform: translateY(-1px);
+}
+
+.enroll-face-privacy {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 32px;
+  max-width: 320px;
+}
+
+.enroll-face-dots {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 32px;
+}
+
+.enroll-face-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid var(--border);
+  transition: background 0.2s;
+}
+
+.enroll-face-dot.active {
+  background: #fff;
+  border-color: #fff;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.4);
+}
+
+.enroll-face-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+}
+
+.enroll-face-back {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 8px 0;
+}
+
+.enroll-face-back:hover {
+  color: var(--text);
+}
+
+.enroll-face-skip {
+  background: none;
+  border: none;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 8px 0;
+}
+
+.enroll-face-skip:hover {
+  color: var(--accent);
+}

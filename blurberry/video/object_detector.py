@@ -83,6 +83,7 @@ class PlateCardDetector:
 
         self._prev_gray: Optional[np.ndarray] = None
         self._cached:    List[DetectionEvent] = []
+        self._shape_call_count = 0
 
     # ── Motion gate ───────────────────────────────────────────────────────────
 
@@ -145,38 +146,67 @@ class PlateCardDetector:
     def _cards_by_shape(
         self, frame: np.ndarray, frame_id: int
     ) -> List[DetectionEvent]:
-        """
-        Detect credit/ID cards by contour shape when YOLO misses them.
-        Credit cards are 85.6 x 54 mm — aspect ratio ~1.586.
-        """
         h_f, w_f = frame.shape[:2]
-        gray    = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        blur    = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges   = cv2.Canny(blur, 30, 100)
-        kernel  = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        closed  = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
-        conts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        frame_area = h_f * w_f
+
+        gray   = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        blur   = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges  = cv2.Canny(blur, 30, 100)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+        conts, _ = cv2.findContours(
+            closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
 
         events = []
         for cnt in conts:
             area = cv2.contourArea(cnt)
-            if not (4000 < area < h_f * w_f * 0.35):
+
+            # Must be 1.5% – 10% of frame
+            # Below 1.5%  → too small to be a card worth blurring
+            # Above 10%   → monitor, whiteboard, wall — not a card
+            if not (frame_area * 0.015 < area < frame_area * 0.10):
                 continue
+
             peri   = cv2.arcLength(cnt, True)
             approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+
+            # Must be exactly 4 corners
             if len(approx) != 4:
                 continue
+
             x, y, w, h = cv2.boundingRect(approx)
+
+            # Must be at least 120×75 px — smaller than this isn't readable anyway
+            if w < 120 or h < 75:
+                continue
+
+            # Aspect ratio — credit card: 1.586, Aadhaar: ~1.58, PAN: ~1.58
+            # Tight window: 1.45 – 1.72 only
             asp = w / max(h, 1)
-            if 1.3 < asp < 1.9:
-                events.append(DetectionEvent(
-                    type="card",
-                    bbox=(max(0, x-12), max(0, y-12),
-                          min(w_f, x+w+12), min(h_f, y+h+12)),
-                    confidence=0.60,
-                    frame_id=frame_id,
-                    blur=True,
-                ))
+            if not (1.45 < asp < 1.72):
+                continue
+
+            # Solidity check — real card in hand is a solid filled rectangle
+            # Monitors/screens seen across a room have low solidity (gaps, bezels)
+            hull_area = cv2.contourArea(cv2.convexHull(cnt))
+            solidity  = area / hull_area if hull_area > 0 else 0
+            if solidity < 0.85:
+                continue
+
+            events.append(DetectionEvent(
+                type="card",
+                bbox=(
+                    max(0,   x - 12),
+                    max(0,   y - 12),
+                    min(w_f, x + w + 12),
+                    min(h_f, y + h + 12),
+                ),
+                confidence=0.60,
+                frame_id=frame_id,
+                blur=True,
+            ))
+
         return events
 
     # ── Public detect() ───────────────────────────────────────────────────────
@@ -202,11 +232,6 @@ class PlateCardDetector:
                 events.extend(self._run(self.card_model, frame, frame_id, "card"))
             except Exception as e:
                 print(f"[ObjDet] card error: {e}")
-
-        # Shape fallback — catches Aadhaar/ID cards YOLO missed
-        card_found = any(e.type == "card" for e in events)
-        if not card_found:
-            events.extend(self._cards_by_shape(frame, frame_id))
 
         self._cached = events
         return events

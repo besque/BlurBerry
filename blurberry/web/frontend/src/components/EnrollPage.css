@@ -1,0 +1,201 @@
+.enroll-page {
+  position: relative;
+  z-index: 2;
+  min-height: calc(100vh - 65px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.enroll-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 32px 36px;
+  max-width: 420px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+}
+
+.enroll-title {
+  font-family: var(--sans);
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+
+.enroll-desc {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-bottom: 24px;
+}
+
+.enroll-preview-placeholder {
+  background: var(--bg);
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 40px 24px;
+  margin-bottom: 20px;
+  color: var(--muted);
+}
+
+.enroll-preview-placeholder .enroll-preview-icon {
+  font-size: 2.5rem;
+  display: block;
+  margin-bottom: 12px;
+  opacity: 0.6;
+}
+
+.enroll-preview-placeholder p {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.enroll-preview-wrap {
+  position: relative;
+  width: 100%;
+  max-width: 320px;
+  margin: 0 auto 20px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #000;
+  aspect-ratio: 4/3;
+}
+
+.enroll-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  background: #000;
+}
+
+.enroll-video-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.enroll-preview-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.enroll-preview-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--muted);
+  background: #000;
+}
+
+.enroll-backend-error {
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  color: #f59e0b;
+}
+
+.enroll-backend-error code {
+  font-size: 0.85rem;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.enroll-progress-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.enroll-progress-bar-wrap {
+  width: 80%;
+  max-width: 280px;
+  height: 12px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.enroll-progress-bar {
+  height: 100%;
+  background: var(--green);
+  border-radius: 6px;
+  transition: width 0.15s ease;
+}
+
+.enroll-progress-text {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  color: #fff;
+}
+
+.btn-enroll-cta {
+  width: 100%;
+  padding: 12px 20px !important;
+  font-size: 0.85rem !important;
+}
+
+.btn-enroll-back {
+  margin-top: 12px;
+  font-size: 0.75rem;
+}
+
+.enroll-error {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--red);
+  margin-top: 12px;
+}
+
+.enroll-result {
+  margin-top: 8px;
+  padding: 16px;
+  border-radius: 10px;
+  text-align: center;
+}
+
+.enroll-result p {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  margin-bottom: 14px;
+}
+
+.enroll-result-success {
+  background: rgba(26, 255, 160, 0.08);
+  border: 1px solid rgba(26, 255, 160, 0.3);
+  color: var(--green);
+}
+
+.enroll-result-error {
+  background: rgba(255, 61, 106, 0.08);
+  border: 1px solid rgba(255, 61, 106, 0.3);
+  color: var(--red);
+}
+
+.enroll-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}

@@ -1,0 +1,205 @@
+.face-capture-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.face-capture-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  max-width: 640px;
+  width: 100%;
+  overflow: hidden;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+}
+
+.face-capture-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  background: linear-gradient(90deg, #5b21b6, #6366f1);
+  color: #fff;
+}
+
+.face-capture-header-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.face-capture-header-title {
+  flex: 1;
+  font-family: var(--sans);
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.face-capture-close {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: #fff;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.face-capture-close:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.face-capture-body {
+  padding: 24px;
+}
+
+.face-capture-label {
+  display: block;
+  font-size: 0.9rem;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.face-capture-input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(123, 92, 240, 0.5);
+  background: var(--card);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.9rem;
+  margin-bottom: 20px;
+  outline: none;
+}
+
+.face-capture-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(123, 92, 240, 0.2);
+}
+
+.face-capture-input::placeholder {
+  color: var(--muted);
+}
+
+.face-capture-preview-wrap {
+  position: relative;
+  width: 100%;
+  min-height: 320px;
+  height: 420px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #000;
+  margin-bottom: 20px;
+}
+
+.face-capture-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.face-capture-canvas-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  border-radius: 12px;
+}
+
+.face-capture-preview-overlay {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.face-capture-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 10px 14px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  font-size: 0.78rem;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.face-capture-progress-bar {
+  height: 6px;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.15s ease;
+}
+
+.face-capture-instructions {
+  margin-bottom: 24px;
+}
+
+.face-capture-instructions-title {
+  font-size: 0.9rem;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.face-capture-instructions ul {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.face-capture-btn {
+  width: 100%;
+  padding: 14px 20px;
+  border-radius: 12px;
+  border: none;
+  background: linear-gradient(90deg, #5b21b6, #6366f1);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.2s, transform 0.15s;
+}
+
+.face-capture-btn:hover:not(:disabled) {
+  opacity: 0.95;
+  transform: translateY(-1px);
+}
+
+.face-capture-btn-disabled {
+  opacity: 0.8;
+  cursor: not-allowed;
+}
+
+.face-capture-error {
+  color: #f85149;
+  font-size: 0.85rem;
+  margin: 0 0 10px 0;
+  text-align: center;
+}

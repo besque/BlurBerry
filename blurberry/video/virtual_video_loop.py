@@ -2,11 +2,12 @@
 Virtual VideoLoop - Enhanced VideoLoop with Virtual Camera Output
 
 Replaces local display with OBS Virtual Camera streaming for Zoom/Discord integration.
+Optimized for low latency: latest-frame BGR buffer (no JPEG encode/decode in hot path).
 """
 import cv2
+import numpy as np
 import threading
 import time
-import queue
 from typing import List, Optional, Callable
 from datetime import datetime
 
@@ -26,6 +27,9 @@ from blurberry.video.tracker import MultiObjectTracker
 
 OUTPUT_DELAY_SECONDS = AV_DELAY_SECONDS
 
+# Target FPS for virtual camera (match OBS default; lower = less CPU if pipeline can't keep up)
+VIRTUAL_CAM_FPS = 30
+
 class VirtualVideoLoop:
     def __init__(self, config: PipelineConfig, source: int = 0, debug: bool = False):
         self.config = config
@@ -37,14 +41,14 @@ class VirtualVideoLoop:
         self.tracker = MultiObjectTracker(max_age=45, min_hits=1, iou_threshold=0.25)
         self.external_detectors: List[Callable] = []
 
-        self.current_output_frame: Optional[bytes] = None
+        # Latest-frame buffer: BGR numpy array (no encode/decode = lower latency)
+        self.current_output_frame: Optional[bytes] = None  # kept for any consumer expecting JPEG bytes
+        self._latest_bgr: Optional[np.ndarray] = None
         self.frame_lock = threading.Lock()
 
         self.frame_id = 0
         self.last_object_detection_frame = -999
         self.fps = 0
-
-        self._delay_queue: queue.Queue = queue.Queue()
 
         # Stores latest non-face detections between object detection runs
         self._last_object_events: List[DetectionEvent] = []
@@ -52,6 +56,8 @@ class VirtualVideoLoop:
         # Virtual camera setup
         self.cam = None
         self.virtual_camera_active = False
+        # Lightweight overlay for virtual camera (set False to skip overlay for max FPS)
+        self._light_overlay = True
 
     def add_detector(self, detector_fn: Callable):
         self.external_detectors.append(detector_fn)
@@ -97,7 +103,7 @@ class VirtualVideoLoop:
         self.virtual_camera_active = False
 
     def add_virtual_camera_overlay(self, frame, status="Virtual Camera Active"):
-        """Add virtual camera specific overlays"""
+        """Add virtual camera specific overlays (full). Use _add_light_overlay for low-latency path."""
         display = frame.copy()
         
         # Title
@@ -129,45 +135,66 @@ class VirtualVideoLoop:
         
         return display
 
+    def _add_light_overlay(self, frame: np.ndarray) -> np.ndarray:
+        """Minimal overlay for virtual camera (FPS + indicator only) to reduce latency."""
+        if not self._light_overlay:
+            return frame
+        h, w = frame.shape[:2]
+        # Single line: FPS + "BlurBerry"
+        cv2.putText(frame, f"FPS: {self.fps:.1f} | BlurBerry", (10, min(28, h - 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 100), 1)
+        return frame
+
     def _release_loop(self):
-        """Enhanced release loop with virtual camera output"""
+        """Release loop: grab latest BGR frame (no encode/decode), send to virtual cam or display.
+        Runs at target FPS; always sends the most recent frame to minimize latency and avoid backlog.
+        """
+        frame_interval = 1.0 / VIRTUAL_CAM_FPS
+        next_send_time = time.monotonic()
+
         while self.running:
-            try:
-                ready_time, frame_bytes = self._delay_queue.get(timeout=0.1)
-            except queue.Empty:
-                continue
-
-            wait = ready_time - time.monotonic()
-            if wait > 0:
-                time.sleep(wait)
-
+            now = time.monotonic()
+            # Grab latest frame only (drop stale; no queue buildup)
             with self.frame_lock:
-                self.current_output_frame = frame_bytes
+                frame = self._latest_bgr
+                self._latest_bgr = None
 
-            import numpy as np
-            frame = cv2.imdecode(np.frombuffer(frame_bytes, np.uint8), cv2.IMREAD_COLOR)
             if frame is not None:
-                # Add virtual camera overlay
-                display_frame = self.add_virtual_camera_overlay(frame)
-                
-                # Send to virtual camera or show locally
+                # Keep JPEG for any external consumer (e.g. web)
+                _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                with self.frame_lock:
+                    self.current_output_frame = buf.tobytes()
+
+                display_frame = self._add_light_overlay(frame.copy())
+
                 if self.virtual_camera_active and self.cam:
                     try:
                         self.cam.send(display_frame)
-                        self.cam.sleep_until_next_frame()
                     except Exception as e:
                         print(f"⚠️  Virtual camera error: {e}")
-                        # Fallback to local display
                         cv2.imshow("BlurBerry AI - Local Display", display_frame)
                         if cv2.waitKey(1) & 0xFF == ord('q'):
                             self.running = False
                             break
                 else:
-                    # Local display fallback
                     cv2.imshow("BlurBerry AI - Local Display", display_frame)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         self.running = False
                         break
+
+            # Throttle: use virtual camera's frame sync when active, else fixed interval
+            if self.virtual_camera_active and self.cam:
+                try:
+                    self.cam.sleep_until_next_frame()
+                except Exception:
+                    pass
+            else:
+                next_send_time += frame_interval
+                sleep_time = next_send_time - time.monotonic()
+                if sleep_time > 0.001:
+                    time.sleep(sleep_time)
+                else:
+                    next_send_time = time.monotonic()
 
         cv2.destroyAllWindows()
 
@@ -254,13 +281,13 @@ class VirtualVideoLoop:
                 fps_counter = 0
                 fps_start = time.monotonic()
 
-            # Add FPS to frame
+            # Add FPS to frame (so release thread can show it or we use it in light overlay)
             cv2.putText(output, f"FPS: {self.fps:.1f}", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-            _, buf = cv2.imencode(".jpg", output, [cv2.IMWRITE_JPEG_QUALITY, 80])
-            ready_time = capture_time + OUTPUT_DELAY_SECONDS
-            self._delay_queue.put((ready_time, buf.tobytes()))
+            # Write latest BGR to buffer (release thread sends it; no encode in hot path)
+            with self.frame_lock:
+                self._latest_bgr = output
 
         cap.release()
         self.running = False

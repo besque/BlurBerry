@@ -1,0 +1,147 @@
+.stream-stats-panel {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+}
+
+.stream-stats-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--sans);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.stream-stats-title-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+}
+
+.stream-stats-subtitle {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin: -8px 0 0 0;
+}
+
+.stream-stats-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.stream-stat-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  position: relative;
+  min-height: 72px;
+}
+
+.stream-stat-card-fps {
+  border-color: rgba(123, 92, 240, 0.4);
+}
+
+.stream-stat-icon {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stream-stat-icon-fps {
+  color: #3fb950;
+}
+
+.stream-stat-icon-cpu {
+  color: #58a6ff;
+}
+
+.stream-stat-icon-bitrate {
+  color: #a371f7;
+}
+
+.stream-stat-icon-dropped {
+  color: #f85149;
+}
+
+.stream-stat-value {
+  font-family: var(--mono);
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-left: 32px;
+  line-height: 1.2;
+}
+
+.stream-stat-label {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-left: 32px;
+  margin-top: 2px;
+}
+
+.stream-stats-status-box {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-top: 4px;
+}
+
+.stream-stats-status-title {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.stream-stats-status-row {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stream-stats-status-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stream-stats-status-label {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.stream-stats-status-value {
+  font-family: var(--mono);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.stream-stats-status-value.live {
+  color: #3fb950;
+}
+
+.stream-stats-status-value.offline {
+  color: var(--muted);
+}
+

@@ -1,0 +1,73 @@
+.landing {
+  position: relative;
+  z-index: 2;
+  min-height: calc(100vh - 65px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.landing-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 48px 40px;
+  max-width: 420px;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+}
+
+.landing-card .logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--sans);
+  font-weight: 800;
+  font-size: 1.8rem;
+  letter-spacing: -0.5px;
+  margin-bottom: 8px;
+}
+
+.landing-card .logo span {
+  color: var(--accent2);
+}
+
+.landing-tagline {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 32px;
+}
+
+.landing-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.btn-landing {
+  padding: 14px 24px !important;
+  font-size: 0.85rem !important;
+  width: 100%;
+}
+
+.btn-secondary-cta {
+  background: transparent !important;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.btn-secondary-cta:hover {
+  background: var(--card) !important;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.landing-hint {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
