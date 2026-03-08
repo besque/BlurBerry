@@ -219,7 +219,7 @@
         <div class="video-ratio">
           <div class="corner tl"></div><div class="corner tr"></div>
           <div class="corner bl"></div><div class="corner br"></div>
-          <img id="videoFeed" src="/video_feed" alt="Live feed">
+          <img id="videoFeed" alt="Live feed">
 
           <!-- Overlay: key hints + progress bar -->
           <div class="video-overlay" id="videoOverlay">
@@ -339,18 +339,47 @@
     await fetch('/start', { method: 'POST' });
     document.getElementById('landing').classList.add('hidden');
     document.getElementById('app').classList.remove('hidden');
+    // Start video feed after app is visible so the request is not deferred by the browser
+    requestAnimationFrame(function() {
+      requestAnimationFrame(function() {
+        ensureVideoFeedStarted();
+      });
+    });
     setInterval(pollStatus, 500);
+    pollStatus(); // run once so video feed starts as soon as backend reports starting/ready
   }
 
   async function pollStatus() {
     try {
       const data = await fetch('/status').then(r => r.json());
       applyPhase(data);
+      if (data.settings) applySettingsToUI(data.settings);
     } catch(e) {}
+  }
+
+  function applySettingsToUI(settings) {
+    ['faces', 'plates', 'cards', 'nsfw'].forEach(function(feature) {
+      if (settings[feature] === undefined) return;
+      featState[feature] = settings[feature];
+      const card = document.getElementById('card-' + feature);
+      const cb = document.getElementById('toggle-' + feature);
+      if (card) card.classList.toggle('active', !!settings[feature]);
+      if (cb) cb.checked = !!settings[feature];
+    });
+  }
+
+  function ensureVideoFeedStarted() {
+    const img = document.getElementById('videoFeed');
+    if (!img || (img.src && img.src.indexOf('/video_feed') !== -1)) return;
+    img.src = '/video_feed?t=' + Date.now();
   }
 
   function applyPhase(data) {
     const phase = data.phase;
+    // Always start video feed as soon as backend can serve frames (fixes cached HTML / missed startApp set)
+    if (data.running && ['starting', 'ready', 'collecting', 'enrolled', 'streaming'].includes(phase)) {
+      ensureVideoFeedStarted();
+    }
     if (phase === lastPhase && phase !== 'collecting') return;
     lastPhase = phase;
 
@@ -367,7 +396,14 @@
     document.getElementById('hintStream').style.display    = 'none';
     overlay.classList.remove('hidden');
 
-    if (phase === 'ready') {
+    if (phase === 'starting') {
+      badge.style.color  = 'var(--muted)';
+      liveDot.style.background = 'var(--muted)';
+      liveText.textContent = 'Initialising...';
+      label.textContent  = 'BlurBerry · Initialising';
+      panel.classList.add('dimmed');
+
+    } else if (phase === 'ready') {
       badge.style.color  = 'var(--accent)';
       liveDot.style.background = 'var(--accent)';
       liveText.textContent = 'Ready — awaiting enrollment';
@@ -414,13 +450,14 @@
   });
 
   async function toggleFeature(feature) {
-    const res  = await fetch(`/toggle/${feature}`, { method: 'POST' });
+    const res = await fetch(`/toggle/${feature}`, { method: 'POST' });
     const data = await res.json();
+    if (!res.ok || data.error) return;
     featState[feature] = data.enabled;
     const card = document.getElementById(`card-${feature}`);
     const cb   = document.getElementById(`toggle-${feature}`);
-    cb.checked = data.enabled;
-    data.enabled ? card.classList.add('active') : card.classList.remove('active');
+    if (cb) cb.checked = data.enabled;
+    if (card) card.classList.toggle('active', !!data.enabled);
   }
 </script>
 </body>

@@ -96,6 +96,12 @@ def _ready_phase():
     with _lock:
         _state['phase'] = 'ready'
 
+    # Produce first frame so /video_feed has something to send as soon as client connects
+    ok, frame = _cap.read()
+    if ok:
+        with _lock:
+            _jpeg = _encode_jpeg(frame)
+
     print('[BlurBerry] Ready — waiting for E to start enrollment')
     _evt_start_collect.clear()
 
@@ -210,6 +216,14 @@ def _streaming_thread():
     except Exception as e:
         print(f'[BlurBerry] Object detector skipped: {e}')
 
+    nsfw_detect = None
+    try:
+        from blurberry.video.nsfw_detector import make_nsfw_detector
+        nsfw_detect = make_nsfw_detector()
+        print('[BlurBerry] NSFW detector loaded')
+    except Exception as e:
+        print(f'[BlurBerry] NSFW detector skipped: {e}')
+
     mp_face = None
     if not _face_app:
         try:
@@ -221,6 +235,7 @@ def _streaming_thread():
 
     frame_id    = 0
     cached_objs = []
+    cached_nsfw = []
     print('[BlurBerry] Streaming...')
 
     while _running:
@@ -264,10 +279,20 @@ def _streaming_thread():
             except Exception:
                 cached_objs = []
 
+        if frame_id % 15 == 0 and nsfw_detect:
+            try:
+                cached_nsfw = nsfw_detect(frame, frame_id)
+            except Exception:
+                cached_nsfw = []
+
         for ev in cached_objs:
             if ev.type == 'plate' and s['plates']:
                 _blur_region(output, *ev.bbox)
             elif ev.type == 'card' and s['cards']:
+                _blur_region(output, *ev.bbox)
+
+        if s['nsfw']:
+            for ev in cached_nsfw:
                 _blur_region(output, *ev.bbox)
 
         with _lock:
@@ -298,6 +323,13 @@ def _start_thread():
         print('[BlurBerry] ERROR: cannot open webcam')
         _running = False
         return
+    # Show first frame immediately so /video_feed has something while face app loads
+    with _lock:
+        _state['phase'] = 'starting'
+    ok, frame = _cap.read()
+    if ok:
+        with _lock:
+            _jpeg = _encode_jpeg(frame)
     _init_face_app()
     _ready_phase()
 
@@ -305,7 +337,10 @@ def _start_thread():
 
 @app.route('/')
 def index():
-    return send_from_directory(STATIC, 'index.html')
+    r = send_from_directory(STATIC, 'index.html')
+    r.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    r.headers['Pragma'] = 'no-cache'
+    return r
 
 @app.route('/start', methods=['POST'])
 def start():
@@ -366,7 +401,10 @@ def _gen():
 
 @app.route('/video_feed')
 def video_feed():
-    return Response(_gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
+    r = Response(_gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
+    r.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    r.headers['Pragma'] = 'no-cache'
+    return r
 
 if __name__ == '__main__':
     print('BlurBerry → http://localhost:5000')
