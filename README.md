@@ -1,5 +1,5 @@
 # BlurBerry - AI-Powered Privacy Filter
-[![YouTube Demo](https://img.shields.io/badge/Watch-Demo-red?logo=youtube&logoColor=white)](https://youtube.com/watch?v=YOUR_DEMO_VIDEO)
+[![YouTube Demo](https://img.shields.io/badge/Watch-Demo-red?logo=youtube&logoColor=white)](https://www.youtube.com/watch?v=Bj_x8OvU-Kc)
 
 ## Overview
 
