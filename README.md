@@ -1,4 +1,5 @@
 # BlurBerry - AI-Powered Privacy Filter
+[![YouTube Demo](https://img.shields.io/badge/Watch-Demo-red?logo=youtube&logoColor=white)](https://youtube.com/watch?v=YOUR_DEMO_VIDEO)
 
 ## Overview
 
@@ -13,6 +14,12 @@ BlurBerry is a real-time privacy protection system that automatically blurs sens
 - **Virtual Camera Output**: Streams processed video to OBS Virtual Camera for Zoom, Teams, Meet
 - **Web Interface**: Browser-based control panel with live preview
 - **Real-time Performance**: Optimized for smooth 30 FPS streaming
+
+## Screenshots
+![demo1](https://github.com/user-attachments/assets/9cea181a-c136-4cf7-88bd-2af40a54c175)
+![demo3](https://github.com/user-attachments/assets/eec8e563-a871-41dc-b80c-ffec1d6cd05f)
+
+
 
 ## Directory Structure
 
