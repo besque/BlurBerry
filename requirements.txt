@@ -1,0 +1,33 @@
+opencv-python
+numpy
+flask
+
+# Face recognition
+insightface
+onnxruntime
+
+# Object detection
+ultralytics
+coremltools; sys_platform == "darwin"   # CoreML export for the Neural Engine
+
+# NSFW detection
+nudenet
+
+# Tracking
+filterpy
+scipy
+
+# Screen / Windows integration
+mss
+pywin32; sys_platform == "win32"
+
+# Optional: virtual camera output (OBS Virtual Camera)
+pyvirtualcam
+
+# macOS: window list/capture for screen share, camera list to skip virtual cameras
+pyobjc-framework-Quartz; sys_platform == "darwin"
+pyobjc-framework-AVFoundation; sys_platform == "darwin"
+
+# OCR for text PII: Apple Vision on macOS; elsewhere EasyOCR (or PaddleOCR if installed)
+pyobjc-framework-Vision; sys_platform == "darwin"
+easyocr; sys_platform != "darwin"
