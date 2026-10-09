@@ -8,10 +8,14 @@ Threads while streaming:
   frame readers  → camera (and screen, when shared) keep only their newest frame
   detector worker→ plates/cards (~15 Hz) and NSFW (~2 Hz), off the video thread
   text PII worker→ OCR on its own thread (camera ~1 Hz, screen ~5 Hz)
+  voice          → mic held in a delay line while ASR finds spoken PII to bleep
+                   (blurberry/audio/voice_redactor.py); the video is held back by the
+                   same delay so lips stay in sync
   stream thread  → faces every frame, tracks object boxes between detections, blurs, outputs
 
 BLURBERRY_SOURCE=<camera index | video file> picks the camera input
 (default: the first camera that isn't a virtual one such as OBS Virtual Camera).
+--open opens the page in the browser once the server is up.
 
 Named face whitelist, screen sharing, text PII and the blur slider are ported
 from CenServe (censerve/web/server.py).
@@ -25,6 +29,8 @@ sys.path.insert(0, ROOT)
 
 from flask import Flask, Response, jsonify, send_from_directory, request
 
+from blurberry.video.camera import configured_source, open_camera
+
 app    = Flask(__name__)
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
 ENROLLED_DIR  = os.path.join(ROOT, 'enrolled_faces')
@@ -36,30 +42,7 @@ MAX_ENROLLED   = 5
 ENROLL_FRAMES  = 30
 OWNER_THRESHOLD = 0.38
 
-VIRTUAL_CAMERA_WORDS = ('obs', 'virtual')
-
-def _default_camera() -> int:
-    """Index of the first real camera. Once the OBS Virtual Camera is installed it
-    usually sorts first on macOS, and reading it would feed our own output back in.
-    Mirrors OpenCV's AVFoundation order: video + muxed devices sorted by uniqueID."""
-    if sys.platform != 'darwin':
-        return 0
-    try:
-        import AVFoundation as AV
-        devs = (list(AV.AVCaptureDevice.devicesWithMediaType_(AV.AVMediaTypeVideo))
-                + list(AV.AVCaptureDevice.devicesWithMediaType_(AV.AVMediaTypeMuxed)))
-        devs.sort(key=lambda d: str(d.uniqueID()))
-        for i, d in enumerate(devs):
-            name = str(d.localizedName())
-            if not any(w in name.lower() for w in VIRTUAL_CAMERA_WORDS):
-                print(f'[BlurBerry] Camera: {name} (index {i})')
-                return i
-    except Exception as e:
-        print(f'[BlurBerry] Camera list unavailable ({e}); using camera 0')
-    return 0
-
-_src          = os.environ.get('BLURBERRY_SOURCE', '')
-SOURCE        = (int(_src) if _src.isdigit() else _src) if _src else _default_camera()
+SOURCE        = configured_source()
 CAM_W, CAM_H  = 1280, 720
 SCREEN_FPS    = 15
 JPEG_QUALITY  = 90
@@ -93,6 +76,7 @@ _settings = {
     'cards':    True,
     'nsfw':     True,
     'text_pii': True,
+    'voice':    True,
 }
 
 _cap            = None   # camera _FrameReader
@@ -102,6 +86,8 @@ _face_app       = None
 _obj_det        = None
 _nsfw_detect    = None
 _text_worker    = None
+_voice          = None   # LiveVoice
+_voice_error    = None
 _enrolled_faces = {}     # name → [embedding, ...]
 
 _evt_begin_stream = threading.Event()
@@ -135,13 +121,17 @@ def _blur_region(frame, x1, y1, x2, y2, strength=55, oval=False):
     scale = cells / max(rw, rh)
     small = cv2.resize(roi, (max(1, round(rw * scale)), max(1, round(rh * scale))),
                        interpolation=cv2.INTER_AREA)
-    blurred = cv2.resize(small, (rw, rh), interpolation=cv2.INTER_LINEAR)
-    k = max(3, (min(rw, rh) // max(1, int(cells))) | 1)
-    blurred = cv2.GaussianBlur(blurred, (k, k), 0)
+    # Smooth at 1/8 size, then one cheap upscale: same look as smoothing at full
+    # size, without a huge kernel on a big close-up face
+    mw, mh = max(1, rw // 8), max(1, rh // 8)
+    mid = cv2.resize(small, (mw, mh), interpolation=cv2.INTER_LINEAR)
+    k = max(3, (min(mw, mh) // max(1, int(cells))) | 1)
+    mid = cv2.GaussianBlur(mid, (k, k), 0)
+    blurred = cv2.resize(mid, (rw, rh), interpolation=cv2.INTER_LINEAR)
     if oval:
         mask = np.zeros((rh, rw), np.uint8)
         cv2.ellipse(mask, (rw // 2, rh // 2), (rw // 2, rh // 2), 0, 0, 360, 255, -1)
-        roi[mask > 0] = blurred[mask > 0]
+        cv2.copyTo(blurred, mask, roi)
     else:
         roi[:] = blurred
 
@@ -349,13 +339,8 @@ class _DetectorWorker(threading.Thread):
 
 def _init_camera():
     global _cap
-    cap = cv2.VideoCapture(SOURCE)
+    cap = open_camera(SOURCE, CAM_W, CAM_H)
     is_file = isinstance(SOURCE, str)
-    if not is_file:
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  CAM_W)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_H)
-        cap.set(cv2.CAP_PROP_FPS, 30)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     if not cap.isOpened():
         return False
     _cap = _FrameReader(cap, pace_fps=(cap.get(cv2.CAP_PROP_FPS) or 30) if is_file else 0.0,
@@ -365,11 +350,12 @@ def _init_camera():
 def _init_face_app():
     global _face_app
     try:
+        import onnxruntime
         from insightface.app import FaceAnalysis
-        # CoreML runs on the Neural Engine on Macs (~3x faster, identical results);
-        # onnxruntime drops it silently where it isn't available.
-        _face_app = FaceAnalysis(name='buffalo_sc',
-                                 providers=['CoreMLExecutionProvider', 'CPUExecutionProvider'])
+        # CoreML runs on the Neural Engine on Macs (~3x faster, identical results)
+        providers = [p for p in ('CoreMLExecutionProvider', 'CPUExecutionProvider')
+                     if p in onnxruntime.get_available_providers()]
+        _face_app = FaceAnalysis(name='buffalo_sc', providers=providers)
         _face_app.prepare(ctx_id=0, det_size=(320, 320))
         print('[BlurBerry] insightface (buffalo_sc) OK')
     except Exception as e:
@@ -397,19 +383,24 @@ def _init_detectors():
     except Exception as e:
         print(f'[BlurBerry] NSFW detector skipped: {e}')
     try:
-        from blurberry.video.text_pii_detector import TextPIIWorker
-        if sys.platform == 'darwin':
-            backend = 'vision'
-        else:
-            try:
-                import paddleocr  # noqa: F401
-                backend = 'paddle'
-            except ImportError:
-                backend = 'easy'
-        _text_worker = TextPIIWorker(backend=backend, mode='camera')
-        print(f'[BlurBerry] Text PII worker started (backend={backend})')
+        from blurberry.video.text_pii_detector import TextPIIWorker, default_backend
+        _text_worker = TextPIIWorker(backend=default_backend(), mode='camera')
+        print(f'[BlurBerry] Text PII worker started (backend={_text_worker.backend})')
     except Exception as e:
         print(f'[BlurBerry] Text PII skipped: {e}')
+
+def _init_voice():
+    global _voice, _voice_error
+    try:
+        from blurberry.audio.voice_redactor import LiveVoice
+        _voice = LiveVoice()
+        _voice_error = None
+    except ImportError as e:
+        _voice_error = f'Voice redaction needs vosk and sounddevice ({e.name} missing)'
+    except Exception as e:
+        _voice_error = f'Voice redaction unavailable: {e}'
+    if _voice_error:
+        print(f'[BlurBerry] {_voice_error}')
 
 def _open_vcam():
     try:
@@ -471,7 +462,13 @@ def _streaming_thread():
     text_sent_t  = 0.0
     text_hold    = deque(maxlen=2)   # last two OCR results, so one missed read doesn't unblur
     text_seen_fid = -1
+    delayed      = deque()           # (capture time, frame) held back to match the voice delay
     fps_count, fps_t0 = 0, time.monotonic()
+    if _voice:
+        try:
+            _voice.start()
+        except Exception as e:
+            print(f'[BlurBerry] Voice redaction failed to start: {e}')
     print('[BlurBerry] Streaming...')
 
     while _running:
@@ -480,6 +477,7 @@ def _streaming_thread():
         ok, frame = reader.read()
         if not ok:
             continue
+        captured = time.monotonic()
         is_screen = mode == 'screen'
 
         if mode != mode_seen:
@@ -492,6 +490,8 @@ def _streaming_thread():
         with _lock:
             s = dict(_settings)
             strength = _blur_strength
+        if _voice:
+            _voice.set_enabled(s['voice'])
 
         output = frame.copy()
 
@@ -538,17 +538,23 @@ def _streaming_thread():
                     for ev in events:
                         _blur_region(output, *ev.bbox, strength)
 
-        # ── Output ──────────────────────────────────────────────────────────
-        with _lock:
-            _jpeg = _encode_jpeg(output)
+        # ── Output, after the voice delay ───────────────────────────────────
+        delayed.append((captured, output))
+        delay = _voice.video_delay() if _voice else 0.0
+        output = None
+        while delayed and delayed[0][0] + delay <= time.monotonic():
+            output = delayed.popleft()[1]
 
-        if vcam:
-            try:
-                if output.shape[1] != CAM_W or output.shape[0] != CAM_H:
-                    output = cv2.resize(output, (CAM_W, CAM_H))
-                vcam.send(output)   # pacing comes from the source itself
-            except Exception:
-                pass
+        if output is not None:
+            with _lock:
+                _jpeg = _encode_jpeg(output)
+            if vcam:
+                try:
+                    if output.shape[1] != CAM_W or output.shape[0] != CAM_H:
+                        output = cv2.resize(output, (CAM_W, CAM_H))
+                    vcam.send(output)   # pacing comes from the source itself
+                except Exception:
+                    pass
 
         frame_id += 1
         fps_count += 1
@@ -559,6 +565,8 @@ def _streaming_thread():
 
     # ── Cleanup ─────────────────────────────────────────────────────────────
     worker.stop()
+    if _voice:
+        _voice.stop()
     if _screen_reader:
         _screen_reader.release()
     _cap.release()
@@ -588,6 +596,8 @@ def _start_thread():
         _init_face_app()
     if _obj_det is None and _nsfw_detect is None:
         _init_detectors()
+    if _voice is None and _voice_error is None:
+        _init_voice()
     _load_enrolled_faces()
     with _lock:
         _state['phase'] = 'pre_stream'
@@ -653,6 +663,19 @@ def get_status():
             'settings': s,
         })
 
+@app.route('/voice')
+def voice_state():
+    if not _voice:
+        return jsonify({'available': False, 'error': _voice_error, 'transcript': []})
+    return jsonify({'available': True, **_voice.status(), 'transcript': _voice.core.transcript()})
+
+@app.route('/voice/monitor', methods=['POST'])
+def voice_monitor():
+    if not _voice:
+        return jsonify({'error': _voice_error or 'voice not started'}), 400
+    _voice.set_monitor(not _voice.status()['monitor'])
+    return jsonify({'monitor': _voice.status()['monitor'], 'error': _voice.error})
+
 @app.route('/stop', methods=['POST'])
 def stop():
     global _running
@@ -689,13 +712,13 @@ def set_source():
         _source_mode = 'screen'
         if old:
             old.release()
-        print(f'[BlurBerry] Source → screen: {source["label"]}')
+        print(f'[BlurBerry] Source -> screen: {source["label"]}')
     else:
         _source_mode = 'camera'
         old, _screen_reader = _screen_reader, None
         if old:
             old.release()
-        print('[BlurBerry] Source → camera')
+        print('[BlurBerry] Source -> camera')
     return jsonify({'ok': True, 'mode': _source_mode})
 
 # ── Face enrollment routes ─────────────────────────────────────────────────────
@@ -771,6 +794,16 @@ def video_feed():
     r.headers['Pragma'] = 'no-cache'
     return r
 
+def _request_mic_access():
+    """Same for the microphone: open it briefly so the permission prompt appears now."""
+    try:
+        import sounddevice as sd
+        with sd.InputStream(channels=1):
+            time.sleep(0.2)
+    except Exception as e:
+        print(f'[BlurBerry] WARNING: microphone not available ({e}). On macOS, allow microphone '
+              'access for your terminal app in System Settings → Privacy & Security → Microphone.')
+
 def _request_camera_access():
     """macOS only lets the main thread show the camera permission prompt,
     but the camera is opened later from a worker thread. Probe it here once."""
@@ -784,6 +817,12 @@ def _request_camera_access():
 if __name__ == '__main__':
     if sys.platform == 'darwin' and isinstance(SOURCE, int):
         _request_camera_access()
+    if sys.platform == 'darwin':
+        _request_mic_access()
     port = int(os.environ.get('PORT', 5000))
-    print(f'BlurBerry → http://localhost:{port}')
+    url = f'http://localhost:{port}'
+    print(f'BlurBerry -> {url}')
+    if '--open' in sys.argv:
+        import webbrowser
+        threading.Timer(1.5, webbrowser.open, [url]).start()
     app.run(host='0.0.0.0', port=port, threaded=True)

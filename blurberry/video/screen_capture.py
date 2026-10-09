@@ -4,8 +4,9 @@ Captures a monitor or a specific application window as a BGR numpy frame.
 Same read() interface as cv2.VideoCapture so it's a drop-in for the pipeline.
 
 Monitors: mss on every platform.
-Windows:  Win32 on Windows; Quartz (CGWindowList) on macOS, which captures the
-          window's own pixels even when other windows cover it.
+Windows:  the window's own pixels, even when other windows cover it: PrintWindow on
+          Windows, Quartz (CGWindowList) on macOS. If that fails, the screen area the
+          window occupies.
 
 macOS needs Screen Recording permission for the app that launches the server
 (System Settings → Privacy & Security → Screen Recording); without it captures
@@ -22,7 +23,37 @@ import mss
 OUT_W, OUT_H = 1280, 720
 
 if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
     import win32gui
+
+    class _BitmapInfoHeader(ctypes.Structure):
+        _fields_ = [('biSize', wintypes.DWORD), ('biWidth', wintypes.LONG), ('biHeight', wintypes.LONG),
+                    ('biPlanes', wintypes.WORD), ('biBitCount', wintypes.WORD),
+                    ('biCompression', wintypes.DWORD), ('biSizeImage', wintypes.DWORD),
+                    ('biXPelsPerMeter', wintypes.LONG), ('biYPelsPerMeter', wintypes.LONG),
+                    ('biClrUsed', wintypes.DWORD), ('biClrImportant', wintypes.DWORD)]
+
+    _user32, _gdi32, _dwmapi = ctypes.WinDLL('user32'), ctypes.WinDLL('gdi32'), ctypes.WinDLL('dwmapi')
+    for _fn, _args, _res in (
+        (_user32.IsIconic, [wintypes.HWND], wintypes.BOOL),
+        (_user32.GetWindowRect, [wintypes.HWND, ctypes.POINTER(wintypes.RECT)], wintypes.BOOL),
+        (_user32.GetWindowDC, [wintypes.HWND], wintypes.HDC),
+        (_user32.ReleaseDC, [wintypes.HWND, wintypes.HDC], ctypes.c_int),
+        (_user32.PrintWindow, [wintypes.HWND, wintypes.HDC, wintypes.UINT], wintypes.BOOL),
+        (_gdi32.CreateCompatibleDC, [wintypes.HDC], wintypes.HDC),
+        (_gdi32.CreateCompatibleBitmap, [wintypes.HDC, ctypes.c_int, ctypes.c_int], wintypes.HBITMAP),
+        (_gdi32.SelectObject, [wintypes.HDC, wintypes.HGDIOBJ], wintypes.HGDIOBJ),
+        (_gdi32.GetDIBits, [wintypes.HDC, wintypes.HBITMAP, wintypes.UINT, wintypes.UINT, ctypes.c_void_p,
+                            ctypes.POINTER(_BitmapInfoHeader), wintypes.UINT], ctypes.c_int),
+        (_gdi32.DeleteObject, [wintypes.HGDIOBJ], wintypes.BOOL),
+        (_gdi32.DeleteDC, [wintypes.HDC], wintypes.BOOL),
+        (_dwmapi.DwmGetWindowAttribute, [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD],
+         ctypes.c_long),
+    ):
+        _fn.argtypes, _fn.restype = _args, _res
+    PW_RENDERFULLCONTENT = 2            # renders through DWM, so Chrome/Electron aren't black
+    DWMWA_EXTENDED_FRAME_BOUNDS = 9     # the visible frame, without the invisible resize border
 elif sys.platform == "darwin":
     import Quartz
 
@@ -95,6 +126,45 @@ def list_sources() -> list:
 
 # ── Capture class ─────────────────────────────────────────────────────────────
 
+def _print_window(hwnd: int):
+    """A Windows window's own pixels (BGR), even where other windows cover it, or None
+    when Windows can't render it that way (minimised, some protected or GPU content)."""
+    if _user32.IsIconic(hwnd):
+        return None
+    rect = wintypes.RECT()
+    if not _user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return None
+    w, h = rect.right - rect.left, rect.bottom - rect.top
+    if w <= 0 or h <= 0:
+        return None
+    window_dc = _user32.GetWindowDC(hwnd)
+    memory_dc = _gdi32.CreateCompatibleDC(window_dc)
+    bitmap = _gdi32.CreateCompatibleBitmap(window_dc, w, h)
+    previous = _gdi32.SelectObject(memory_dc, bitmap)
+    pixels = np.empty((h, w, 4), np.uint8)
+    try:
+        if not _user32.PrintWindow(hwnd, memory_dc, PW_RENDERFULLCONTENT):
+            return None
+        header = _BitmapInfoHeader(ctypes.sizeof(_BitmapInfoHeader), w, -h, 1, 32, 0, 0, 0, 0, 0, 0)
+        if not _gdi32.GetDIBits(memory_dc, bitmap, 0, h, pixels.ctypes.data, ctypes.byref(header), 0):
+            return None
+    finally:
+        _gdi32.SelectObject(memory_dc, previous)
+        _gdi32.DeleteObject(bitmap)
+        _gdi32.DeleteDC(memory_dc)
+        _user32.ReleaseDC(hwnd, window_dc)
+    visible = wintypes.RECT()
+    if _dwmapi.DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, ctypes.byref(visible),
+                                     ctypes.sizeof(visible)) == 0:
+        x1, y1 = max(0, visible.left - rect.left), max(0, visible.top - rect.top)
+        x2, y2 = min(w, visible.right - rect.left), min(h, visible.bottom - rect.top)
+        if x2 > x1 and y2 > y1:
+            pixels = pixels[y1:y2, x1:x2]
+    if not pixels[..., :3].any():
+        return None
+    return cv2.cvtColor(pixels, cv2.COLOR_BGRA2BGR)
+
+
 def _fit(frame: np.ndarray) -> np.ndarray:
     """Letterbox into OUT_W×OUT_H without stretching."""
     h, w = frame.shape[:2]
@@ -121,18 +191,8 @@ class ScreenCapture:
         self._source = None
 
     def set_source(self, source: dict):
-        """
-        Set which monitor or window to capture.
-        On Windows, also calls SetWindowDisplayAffinity so GPU-accelerated windows
-        (Chrome, Electron) don't capture as black frames.
-        """
+        """Set which monitor or window to capture."""
         self._source = source
-        if sys.platform == "win32" and source.get('type') == 'window' and source.get('hwnd'):
-            try:
-                win32gui.SetWindowDisplayAffinity(source['hwnd'], 0)
-            except Exception as e:
-                print(f'[ScreenCapture] SetWindowDisplayAffinity failed: {e}')
-                print('[ScreenCapture] Chrome/Electron tabs may capture as black')
 
     def read(self):
         """
@@ -166,7 +226,13 @@ class ScreenCapture:
         return True, _fit(self._grab(self.sct.monitors[self._source['index']]))
 
     def _read_window_win32(self):
-        x, y, x2, y2 = win32gui.GetWindowRect(self._source['hwnd'])
+        if self.sct is None:
+            self.sct = mss.mss()    # also makes the process DPI-aware, so sizes are in real pixels
+        hwnd = self._source['hwnd']
+        frame = _print_window(hwnd)
+        if frame is not None:
+            return True, _fit(frame)
+        x, y, x2, y2 = win32gui.GetWindowRect(hwnd)
         if x2 <= x or y2 <= y:
             return False, None
         return True, _fit(self._grab({'left': x, 'top': y, 'width': x2 - x, 'height': y2 - y}))

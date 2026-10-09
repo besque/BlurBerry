@@ -3,10 +3,11 @@ import threading
 import time
 import queue
 from typing import List, Optional, Callable
-from shared_types import DetectionEvent, PipelineConfig, AV_DELAY_SECONDS
+from blurberry.shared_types import DetectionEvent, PipelineConfig, AV_DELAY_SECONDS
 from blurberry.video.face_pipeline import FacePipeline
 from blurberry.video.blur_compositor import apply_blurs, draw_debug_overlay
 from blurberry.video.tracker import MultiObjectTracker
+from blurberry.video.camera import open_camera
 
 OUTPUT_DELAY_SECONDS = AV_DELAY_SECONDS
 
@@ -67,7 +68,7 @@ class VideoLoop:
         cv2.destroyAllWindows()
 
     def run(self):
-        cap = cv2.VideoCapture(self.source)
+        cap = open_camera(self.source)
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open video source: {self.source}")
 

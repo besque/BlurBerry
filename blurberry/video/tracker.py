@@ -6,7 +6,7 @@ import numpy as np
 from filterpy.kalman import KalmanFilter
 from scipy.optimize import linear_sum_assignment
 from typing import List, Tuple
-from shared_types import DetectionEvent
+from blurberry.shared_types import DetectionEvent
 
 
 def iou(bb_test, bb_gt):

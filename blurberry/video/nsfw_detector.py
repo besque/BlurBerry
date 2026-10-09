@@ -1,9 +1,7 @@
 import numpy as np
 from nudenet import NudeDetector
 from typing import List
-import sys, os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from shared_types import DetectionEvent
+from blurberry.shared_types import DetectionEvent
 
 # NudeNet labels to blur — adjust based on your use case
 LABELS_TO_BLUR = [

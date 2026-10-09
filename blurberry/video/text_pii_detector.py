@@ -3,9 +3,10 @@ Text PII detector — OCRs a frame and blurs text that looks like personal data
 (PAN, Aadhaar, phone, card numbers, emails, IFSC, OTPs, visible passwords).
 
 OCR backends:
-  'vision'  Apple Vision (macOS, on-device, fast; the default on Macs)
-  'paddle'  PaddleOCR
-  'easy'    EasyOCR (fallback everywhere)
+  'vision'   Apple Vision (macOS, on-device, fast; the default on Macs)
+  'windows'  Windows.Media.Ocr (Windows 10/11, on-device, fast; the default on Windows)
+  'paddle'   PaddleOCR
+  'easy'     EasyOCR (fallback everywhere; slow on CPU)
 
 Ported from CenServe (censerve/video/text_pii_detector.py).
 """
@@ -19,9 +20,8 @@ from collections import deque
 
 os.environ.setdefault('PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK', 'True')
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from typing import List, Tuple
-from shared_types import DetectionEvent
+from blurberry.shared_types import DetectionEvent
 
 
 # ── PII regex patterns ────────────────────────────────────────────────────────
@@ -135,12 +135,81 @@ def _merge_adjacent_tokens(
     return merged
 
 
+def default_backend() -> str:
+    if sys.platform == 'darwin':
+        return 'vision'
+    if sys.platform == 'win32':
+        return 'windows'
+    try:
+        import paddleocr  # noqa: F401
+        return 'paddle'
+    except ImportError:
+        return 'easy'
+
+
+def _cuda_available() -> bool:
+    try:
+        import torch
+        return torch.cuda.is_available()
+    except Exception:
+        return False
+
+
+class _WindowsOCR:
+    """The OCR engine built into Windows 10/11, through pywinrt. Construction runs one
+    recognition, so a missing language pack or API mismatch shows up where the caller
+    can fall back to EasyOCR rather than on every frame."""
+
+    def __init__(self):
+        from winrt.windows.globalization import Language
+        from winrt.windows.graphics.imaging import BitmapPixelFormat, SoftwareBitmap
+        from winrt.windows.media.ocr import OcrEngine
+        from winrt.windows.storage.streams import DataWriter
+        self._bitmap, self._bgra8, self._writer = SoftwareBitmap, BitmapPixelFormat.BGRA8, DataWriter
+        self._threads = threading.local()
+        self._join_apartment()
+        self.engine = (OcrEngine.try_create_from_user_profile_languages()
+                       or OcrEngine.try_create_from_language(Language('en-US')))
+        if self.engine is None:
+            raise RuntimeError('no OCR language pack installed (Settings > Time & language > Language)')
+        probe = np.full((80, 360, 3), 255, np.uint8)
+        cv2.putText(probe, '98765 43210', (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 0), 3)
+        self.read(probe)
+
+    def _join_apartment(self):
+        """Blocking on a WinRT call needs a multi-threaded COM apartment, once per thread."""
+        if getattr(self._threads, 'ready', False):
+            return
+        from winrt.runtime import MTA, init_apartment
+        try:
+            init_apartment(MTA)
+        except Exception:
+            pass
+        self._threads.ready = True
+
+    def read(self, bgr: np.ndarray) -> list:
+        self._join_apartment()
+        h, w = bgr.shape[:2]
+        writer = self._writer()
+        writer.write_bytes(cv2.cvtColor(bgr, cv2.COLOR_BGR2BGRA).tobytes())
+        bitmap = self._bitmap.create_copy_from_buffer(writer.detach_buffer(), self._bgra8, w, h)
+        out = []
+        for line in self.engine.recognize_async(bitmap).get().lines:
+            rects = [word.bounding_rect for word in line.words]
+            if not rects:
+                continue
+            x1, y1 = min(r.x for r in rects), min(r.y for r in rects)
+            x2, y2 = max(r.x + r.width for r in rects), max(r.y + r.height for r in rects)
+            out.append(([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], line.text.strip(), 1.0))
+        return out
+
+
 # ── Detector class ────────────────────────────────────────────────────────────
 
 class TextPIIDetector:
     def __init__(self, backend: str = 'easy', mode: str = 'camera'):
         """
-        backend: 'vision' (Apple Vision), 'paddle' (PaddleOCR) or 'easy' (EasyOCR).
+        backend: 'vision', 'windows', 'paddle' or 'easy'; see default_backend().
         mode: 'camera' or 'screen'.
         """
         self.backend = backend
@@ -154,6 +223,16 @@ class TextPIIDetector:
                 return
             except Exception as e:
                 print(f'[TextPII] Apple Vision unavailable ({e}), falling back to EasyOCR')
+                backend = 'easy'
+                self.backend = 'easy'
+
+        if backend == 'windows':
+            try:
+                self.reader = _WindowsOCR()
+                print('[TextPII] Windows OCR loaded')
+                return
+            except Exception as e:
+                print(f'[TextPII] Windows OCR unavailable ({e}), falling back to EasyOCR')
                 backend = 'easy'
                 self.backend = 'easy'
 
@@ -172,13 +251,15 @@ class TextPIIDetector:
 
         if backend == 'easy':
             import easyocr
-            self.reader = easyocr.Reader(['en'], gpu=False, verbose=False)
+            self.reader = easyocr.Reader(['en'], gpu=_cuda_available(), verbose=False)
             print('[TextPII] EasyOCR loaded')
 
     def _run_ocr(self, img: np.ndarray) -> list:
         """Returns list of (pts, text, conf). pts = 4 corner points."""
         if self.backend == 'vision':
             return self._ocr_vision(img)
+        if self.backend == 'windows':
+            return self.reader.read(img)
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
         if self.backend == 'paddle':
@@ -342,6 +423,10 @@ class TextPIIWorker:
         self._stop = False
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
+
+    @property
+    def backend(self) -> str:
+        return self._detector.backend
 
     def submit_frame(self, frame: np.ndarray, frame_id: int):
         """Queue a frame for OCR. Non-blocking; if queue full, newest is dropped so we keep oldest (for display delay)."""

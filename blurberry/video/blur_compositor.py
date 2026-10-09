@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 from typing import List
-from shared_types import DetectionEvent, PipelineConfig
+from blurberry.shared_types import DetectionEvent, PipelineConfig
 
 def apply_blurs(frame: np.ndarray, events: List[DetectionEvent], config: PipelineConfig) -> np.ndarray:
     """Apply gaussian blur to all detection bounding boxes on the frame."""

@@ -10,11 +10,15 @@ import cv2
 import numpy as np
 import sys
 import time
-sys.path.insert(0, ".")
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from shared_types import PipelineConfig
+from blurberry.shared_types import PipelineConfig
 from blurberry.video.face_pipeline import FacePipeline
 from blurberry.video.video_loop import VideoLoop
+from blurberry.video.camera import configured_source, open_camera
+
+CAMERA = configured_source()
 
 FRAMES_NEEDED = 60   # collect 60 frames for enrollment — good balance of speed vs accuracy
 
@@ -27,7 +31,7 @@ config = PipelineConfig(
 
 face_pipeline = FacePipeline(config)
 
-cap = cv2.VideoCapture(0)
+cap = open_camera(CAMERA)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
@@ -124,7 +128,7 @@ print("\n[BlurBerry] Starting stream...")
 print("Your face will NOT be blurred. All others will be.")
 print("Press Q to quit.\n")
 
-loop = VideoLoop(config, source=0, debug=False)
+loop = VideoLoop(config, source=CAMERA, debug=False)
 
 # Pass the already-enrolled face pipeline into the loop so we don't re-download models
 loop.face_pipeline = face_pipeline

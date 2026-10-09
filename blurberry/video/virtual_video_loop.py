@@ -19,10 +19,11 @@ except ImportError:
     VIRTUAL_CAMERA_AVAILABLE = False
     print("⚠️  Virtual camera not available, using local display")
 
-from shared_types import DetectionEvent, PipelineConfig, AV_DELAY_SECONDS
+from blurberry.shared_types import DetectionEvent, PipelineConfig, AV_DELAY_SECONDS
 from blurberry.video.face_pipeline import FacePipeline
 from blurberry.video.blur_compositor import apply_blurs, draw_debug_overlay
 from blurberry.video.tracker import MultiObjectTracker
+from blurberry.video.camera import open_camera
 
 OUTPUT_DELAY_SECONDS = AV_DELAY_SECONDS
 
@@ -173,7 +174,7 @@ class VirtualVideoLoop:
 
     def run(self, use_virtual_camera=True):
         """Run video loop with virtual camera option"""
-        cap = cv2.VideoCapture(self.source)
+        cap = open_camera(self.source)
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open video source: {self.source}")
 

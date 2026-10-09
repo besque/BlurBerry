@@ -205,6 +205,30 @@
     transition: color 0.2s, border-color 0.2s; }
   .enroll-cancel-btn:hover { color: var(--text); border-color: var(--muted); }
 
+  /* ── VOICE PANEL ── */
+  .voice-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    padding: 12px; display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+  .voice-head { display: flex; align-items: center; gap: 8px; }
+  .voice-meter { flex: 1; height: 4px; background: var(--border); border-radius: 100px; overflow: hidden; }
+  .voice-meter span { display: block; height: 100%; width: 0%; background: var(--accent); transition: width 0.15s; }
+  .voice-delay { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--accent2); white-space: nowrap; }
+  .transcript { font-family: 'DM Mono', monospace; font-size: 11px; line-height: 1.8; color: var(--text);
+    max-height: 132px; min-height: 40px; overflow-y: auto; overflow-wrap: anywhere; }
+  .transcript .partial { color: var(--muted); }
+  .transcript .pii { display: inline-block; background: rgba(255,59,92,0.14); color: var(--danger);
+    border: 1px solid rgba(255,59,92,0.35); border-radius: 3px; padding: 0 5px; font-size: 9px;
+    letter-spacing: 0.08em; text-transform: uppercase; line-height: 15px; }
+  .transcript .pii.spill { background: transparent; color: var(--muted); border-color: var(--border); }
+  .transcript-empty { color: var(--muted); }
+  .voice-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); }
+  .voice-foot span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .voice-btn { background: transparent; border: 1px solid var(--border); color: var(--muted);
+    padding: 4px 8px; font-family: 'DM Mono', monospace; font-size: 10px; border-radius: 4px;
+    cursor: pointer; flex-shrink: 0; transition: color 0.2s, border-color 0.2s; }
+  .voice-btn.on { color: var(--accent); border-color: rgba(0,229,160,0.4); }
+  .voice-stats { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); }
+
   /* ── PRE-STREAM PANEL ── */
   .prestream-controls { width: 320px; flex-shrink: 0; border-left: 1px solid var(--border);
     background: var(--panel); display: flex; flex-direction: column;
@@ -482,6 +506,35 @@
         </label>
       </div>
 
+      <div class="toggle-card active" id="card-voice" onclick="toggleFeature('voice')">
+        <div class="toggle-left">
+          <div class="toggle-icon">🎙️</div>
+          <div class="toggle-info">
+            <div class="toggle-label">Voice PII</div>
+            <div class="toggle-desc" id="voiceDesc">Bleeps spoken numbers, IDs</div>
+          </div>
+        </div>
+        <label class="switch" onclick="event.stopPropagation()">
+          <input type="checkbox" id="toggle-voice" checked onchange="toggleFeature('voice')">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="voice-panel" id="voicePanel">
+        <div class="voice-head">
+          <span class="face-panel-title">Live Transcript</span>
+          <span class="voice-meter"><span id="voiceLevel"></span></span>
+          <span class="voice-delay" id="voiceDelay"></span>
+        </div>
+        <div class="transcript" id="voiceTranscript"><span class="transcript-empty">Waiting for speech…</span></div>
+        <div class="voice-foot">
+          <span id="voiceOut">Out: —</span>
+          <button class="voice-btn" id="voiceMonitorBtn" onclick="toggleMonitor()"
+            title="Play the redacted audio on your speakers — use headphones">🎧 Monitor</button>
+        </div>
+        <div class="voice-stats" id="voiceStats"></div>
+      </div>
+
       <div class="divider"></div>
 
       <div class="toggle-card" id="card-screen" onclick="onScreenCardClick(event)">
@@ -567,12 +620,13 @@
 // ══════════════════════════════════════
 //  STATE
 // ══════════════════════════════════════
-const featState   = { faces:true, plates:true, cards:true, nsfw:true, text_pii:true };
+const featState   = { faces:true, plates:true, cards:true, nsfw:true, text_pii:true, voice:true };
 const sourceState = { mode:'camera', source:null };
 let lastPhase          = '';
 let _preEnrollTimer    = null;
 let _streamEnrollTimer = null;
 let _blurDebounce      = null;
+let _voiceTimer        = null;
 
 // ══════════════════════════════════════
 //  BOOT
@@ -606,7 +660,7 @@ async function pollStatus() {
 }
 
 function applySettingsToUI(s) {
-  ['faces','plates','cards','nsfw','text_pii'].forEach(function(f) {
+  ['faces','plates','cards','nsfw','text_pii','voice'].forEach(function(f) {
     if (s[f] === undefined) return;
     featState[f] = s[f];
     const card = document.getElementById('card-'+f);
@@ -703,6 +757,7 @@ function applyPhase(data) {
     hideAllOverlays();
     document.getElementById('videoOverlay').classList.add('hidden');
     ensureVideoFeed('videoFeed');
+    if (!_voiceTimer) { _voiceTimer = setInterval(pollVoice, 300); pollVoice(); }
   }
 }
 
@@ -909,6 +964,61 @@ function _setEnrollUI(prefix, active) {
   if (addBtn)  { addBtn.disabled = active; addBtn.style.opacity = active ? '0.4' : '1'; }
   if (!active && fillEl) fillEl.style.width = '0%';
   if (!active && pctEl)  pctEl.textContent  = '0%';
+}
+
+// ══════════════════════════════════════
+//  VOICE
+// ══════════════════════════════════════
+async function pollVoice() {
+  let v;
+  try { v = await fetch('/voice').then(r => r.json()); } catch(e) { return; }
+  const desc = document.getElementById('voiceDesc');
+  if (!v.available) {
+    desc.textContent = 'Unavailable';
+    document.getElementById('voiceTranscript').innerHTML =
+      '<span class="transcript-empty">' + esc(v.error || 'Voice redaction unavailable') + '</span>';
+    return;
+  }
+  desc.textContent = v.enabled ? (v.mode === 'mute' ? 'Mutes' : 'Bleeps') + ' spoken numbers, IDs' : 'Off · no audio delay';
+  document.getElementById('voiceDelay').textContent = v.enabled ? v.delay.toFixed(1) + ' s delay' : 'live';
+  document.getElementById('voiceLevel').style.width = Math.min(100, Math.sqrt(v.level) * 250) + '%';
+  const out = document.getElementById('voiceOut');
+  out.textContent = 'Out: ' + (v.output || 'no virtual mic');
+  out.title = v.output ? 'Pick "' + v.output + '" as the microphone in your call app'
+                       : 'Install BlackHole (macOS) or VB-Cable (Windows), then restart BlurBerry';
+  document.getElementById('voiceMonitorBtn').classList.toggle('on', !!v.monitor);
+  document.getElementById('voiceStats').textContent = v.redacted + ' words redacted · ' +
+    (v.leaked_ms ? v.leaked_ms + ' ms leaked before detection' : 'nothing leaked') + (v.error ? ' · ' + v.error : '');
+  renderTranscript(v.transcript || []);
+}
+
+function renderTranscript(words) {
+  const el = document.getElementById('voiceTranscript');
+  if (!words.length) { el.innerHTML = '<span class="transcript-empty">Waiting for speech…</span>'; return; }
+  let html = '', i = 0;
+  while (i < words.length) {
+    const w = words[i];
+    if (w.pii) {
+      let j = i;
+      while (j < words.length && words[j].pii === w.pii) j++;
+      const cls = w.pii === 'bleeped' ? 'pii spill' : 'pii';
+      html += '<span class="' + cls + '">' + esc(w.pii) + (j - i > 1 ? ' ×' + (j - i) : '') + '</span> ';
+      i = j;
+    } else {
+      html += '<span' + (w.partial ? ' class="partial"' : '') + '>' + esc(w.w) + '</span> ';
+      i++;
+    }
+  }
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  el.innerHTML = html;
+  if (atBottom) el.scrollTop = el.scrollHeight;
+}
+
+async function toggleMonitor() {
+  try {
+    const r = await fetch('/voice/monitor', { method:'POST' }).then(r => r.json());
+    document.getElementById('voiceMonitorBtn').classList.toggle('on', !!r.monitor);
+  } catch(e) {}
 }
 
 // ══════════════════════════════════════

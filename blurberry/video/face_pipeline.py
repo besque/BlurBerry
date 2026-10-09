@@ -5,11 +5,14 @@ from insightface.app import FaceAnalysis
 from typing import List
 import pickle
 import os
-from shared_types import DetectionEvent, PipelineConfig
+from blurberry.shared_types import DetectionEvent, PipelineConfig
+
+ENROLLED_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                            "enrolled_faces")
 
 
 class FacePipeline:
-    def __init__(self, config: PipelineConfig, enrolled_dir: str = "enrolled_faces"):
+    def __init__(self, config: PipelineConfig, enrolled_dir: str = ENROLLED_DIR):
         self.config = config
         self.enrolled_dir = enrolled_dir
         os.makedirs(enrolled_dir, exist_ok=True)
@@ -25,11 +28,20 @@ class FacePipeline:
         print(f"[FacePipeline] Loaded {len(self.enrolled_embeddings)} enrolled face(s)")
 
     def _load_enrolled_faces(self):
+        """One mean embedding per person, from this pipeline's own files (one array each),
+        the web app's faces.pkl ({name: [embeddings]}) and the old owner.pkl (a list)."""
         self.enrolled_embeddings = []
-        for f in os.listdir(self.enrolled_dir):
-            if f.endswith(".pkl"):
-                with open(os.path.join(self.enrolled_dir, f), "rb") as fp:
-                    self.enrolled_embeddings.append(pickle.load(fp))
+        for f in sorted(os.listdir(self.enrolled_dir)):
+            if not f.endswith(".pkl"):
+                continue
+            with open(os.path.join(self.enrolled_dir, f), "rb") as fp:
+                data = pickle.load(fp)
+            for person in (data.values() if isinstance(data, dict) else [data]):
+                emb = np.asarray(person, dtype=np.float32)
+                if emb.ndim == 2:
+                    emb = emb.mean(axis=0)
+                if emb.ndim == 1 and emb.size:
+                    self.enrolled_embeddings.append(emb / (np.linalg.norm(emb) + 1e-8))
 
     def enroll_from_embeddings(self, embeddings: List[np.ndarray], name: str = "owner"):
         """Average a list of embeddings collected from webcam and save."""

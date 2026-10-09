@@ -1,12 +1,16 @@
 import sys
-sys.path.insert(0, ".")
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import cv2
-from shared_types import PipelineConfig
+from blurberry.shared_types import PipelineConfig
 from blurberry.video.face_pipeline import FacePipeline
 from blurberry.video.object_detector import PlateCardDetector
 from blurberry.video.nsfw_detector import NSFWDetector
 from blurberry.video.blur_compositor import apply_blurs, draw_debug_overlay
 from blurberry.video.tracker import MultiObjectTracker
+from blurberry.video.camera import configured_source, open_camera
+
+CAMERA = configured_source()
 
 config = PipelineConfig()
 
@@ -15,9 +19,7 @@ plate_detector = PlateCardDetector()
 nsfw_detector  = NSFWDetector()
 tracker        = MultiObjectTracker(max_age=60, min_hits=1, iou_threshold=0.15)
 
-cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-if not cap.isOpened():
-    cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
+cap = open_camera(CAMERA)
 
 frame_id         = 0
 last_detections  = []   # plates + cards

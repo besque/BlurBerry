@@ -6,11 +6,13 @@ import numpy as np
 import sys
 import os
 
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from shared_types import PipelineConfig
+from blurberry.shared_types import PipelineConfig
 from blurberry.video.object_detector import PlateCardDetector
+from blurberry.video.camera import configured_source, open_camera
+
+CAMERA = configured_source()
 
 def debug_card_detection():
     """Debug credit card detection"""
@@ -20,7 +22,7 @@ def debug_card_detection():
     detector = PlateCardDetector()
     
     # Open camera
-    cap = cv2.VideoCapture(0)
+    cap = open_camera(CAMERA)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
     

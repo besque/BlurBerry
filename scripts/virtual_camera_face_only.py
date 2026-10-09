@@ -1,20 +1,28 @@
 """
-BlurBerry Face Recognition + Virtual Camera
+BlurBerry Face-Only Virtual Camera Script
 
-Face enrollment and recognition with virtual camera output for Zoom/Discord integration.
+This script:
+1. Runs camera with face enrollment
+2. Starts virtual camera with face privacy protection only
+3. Whitelists enrolled faces (your face stays clear)
+4. Blurs all other faces
+5. Streams to Zoom/Discord via OBS Virtual Camera
 """
 import cv2
 import numpy as np
 import sys
 import time
 import os
+from datetime import datetime
 
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from shared_types import PipelineConfig
+from blurberry.shared_types import PipelineConfig
 from blurberry.video.virtual_video_loop import VirtualVideoLoop
 from blurberry.video.face_pipeline import FacePipeline
+from blurberry.video.camera import configured_source, open_camera
+
+CAMERA = configured_source()
 
 # Virtual camera import
 try:
@@ -27,26 +35,38 @@ except ImportError:
 
 FRAMES_NEEDED = 60   # collect 60 frames for enrollment
 
-def test_face_recognition():
-    """Test face recognition with virtual camera output"""
-    print("\n=== BlurBerry Face Recognition + Virtual Camera ===")
-    print("Press E to enroll your face")
-    print("Press S to skip enrollment and start virtual camera stream")
-    print("Press Q to quit\n")
+def face_only_virtual_camera():
+    """Face-only virtual camera with privacy protection"""
+    print("\n" + "="*60)
+    print("🎭 BlurBerry AI - Face-Only Virtual Camera")
+    print("="*60)
+    print("\n🔒 Privacy Protection Features:")
+    print("   ✅ Face Recognition (your face stays clear)")
+    print("   ❌ Other Faces (auto-blurred)")
+    print("\n📋 Controls:")
+    print("   E - Enroll your face")
+    print("   S - Skip enrollment, start virtual camera")
+    print("   Q - Quit")
+    print("\n🎥 Output: OBS Virtual Camera (for Zoom/Discord)")
+    print("="*60)
 
-    # Configuration
+    # Configuration with face detection only
     config = PipelineConfig(
-        blur_faces=True,
-        detection_cadence=15,
-        blur_strength=51,
-        face_similarity_threshold=0.38
+        blur_faces=True,           # Enable face blur (whitelisted faces won't be blurred)
+        blur_plates=False,         # Skip object detection
+        blur_cards=False,          # Skip object detection
+        blur_nsfw=False,           # Skip object detection
+        blur_text_pii=False,       # Skip object detection
+        detection_cadence=15,      # Not used for face-only
+        blur_strength=51,          # Gaussian blur kernel size
+        face_similarity_threshold=0.38  # Face recognition threshold
     )
 
     # Initialize face pipeline
     face_pipeline = FacePipeline(config)
 
     # Setup camera for enrollment
-    cap = cv2.VideoCapture(0)
+    cap = open_camera(CAMERA)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
@@ -73,7 +93,7 @@ def test_face_recognition():
                 bar_w = int(400 * progress)
                 cv2.rectangle(display, (120, 680), (520, 700), (50, 50, 50), -1)
                 cv2.rectangle(display, (120, 680), (120 + bar_w, 700), (0, 220, 100), -1)
-                cv2.putText(display, f"Collecting: {len(embeddings_collected)}/{FRAMES_NEEDED}",
+                cv2.putText(display, f"Enrolling: {len(embeddings_collected)}/{FRAMES_NEEDED}",
                             (120, 675), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 220, 100), 2)
 
                 # Draw box around face being enrolled
@@ -90,7 +110,8 @@ def test_face_recognition():
                 collecting = False
                 face_pipeline.enroll_from_embeddings(embeddings_collected, name="owner")
                 enrolled = True
-                print(f"[Enrollment] Done! Collected {len(embeddings_collected)} frames.")
+                print(f"\n✅ [Enrollment] Done! Collected {len(embeddings_collected)} frames.")
+                print("🎯 Your face is now whitelisted and will stay clear!")
         else:
             # Draw face boxes while idle
             for face in faces:
@@ -100,10 +121,10 @@ def test_face_recognition():
         # Status overlay
         status = ""
         if enrolled:
-            status = "Face enrolled! Press S to start virtual camera stream"
+            status = "✅ Face enrolled! Press S to start virtual camera"
             color = (0, 220, 100)
         elif collecting:
-            status = "Collecting frames..."
+            status = "📸 Collecting frames..."
             color = (0, 200, 255)
         else:
             status = "Press E to enroll your face | Press S to skip enrollment"
@@ -112,12 +133,21 @@ def test_face_recognition():
         cv2.putText(display, status, (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
 
+        # Privacy features status
+        privacy_status = "🔒 Face Privacy: Your face clear, others blurred"
+        cv2.putText(display, privacy_status, (10, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 165, 0), 2)
+
         # Virtual camera status
         if VIRTUAL_CAMERA_AVAILABLE:
-            cv2.putText(display, "🎥 Virtual Camera Ready", (10, 60),
+            cv2.putText(display, "🎥 Virtual Camera Ready", (10, 90),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-        cv2.imshow("BlurBerry — Face Enrollment", display)
+        # Instructions
+        cv2.putText(display, "E: Enroll | S: Start Camera | Q: Quit", (10, 720-20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+        cv2.imshow("BlurBerry — Face-Only Virtual Camera", display)
 
         key = cv2.waitKey(1) & 0xFF
 
@@ -129,42 +159,63 @@ def test_face_recognition():
         elif key == ord('e') and not collecting:
             embeddings_collected = []
             collecting = True
-            print("[Enrollment] Started collecting frames. Hold still and face the camera.")
+            print("\n📸 [Enrollment] Started collecting frames. Hold still and face the camera.")
+            print("🎯 Your face will be whitelisted and stay clear in virtual camera!")
 
         elif key == ord('s'):
             cap.release()
             cv2.destroyAllWindows()
             break
 
-    # ── Start virtual camera streaming phase ──
-    print("\n[BlurBerry] Starting virtual camera stream...")
+    # ── Start Face-Only Virtual Camera Streaming ──
+    print("\n" + "="*60)
+    print("🚀 Starting Face-Only Virtual Camera...")
+    print("="*60)
+    
     if enrolled:
-        print("Your enrolled face will NOT be blurred. All others will be.")
+        print("✅ Your enrolled face will NOT be blurred.")
+        print("🎯 All other faces WILL be blurred.")
     else:
-        print("No face enrolled. All detected faces will be blurred.")
-    print("🎥 Stream is available in Zoom/Discord as 'OBS Virtual Camera'")
-    print("Press Q to quit.\n")
+        print("⚠️  No face enrolled. ALL detected faces will be blurred.")
+    
+    print("\n🔒 Face Privacy Protection Active:")
+    print("   ✅ Your Face - Clear (if enrolled)")
+    print("   ❌ Other Faces - Blurred")
+    
+    print("\n🎥 Virtual Camera: OBS Virtual Camera")
+    print("📱 Compatible: Zoom, Discord, Teams, Meet")
+    print("⏹️  Press Q to quit")
+    print("="*60)
 
     # Create virtual video loop
-    loop = VirtualVideoLoop(config, source=0, debug=False)
+    loop = VirtualVideoLoop(config, source=CAMERA, debug=False)
 
     # Pass the already-enrolled face pipeline into the loop
     loop.face_pipeline = face_pipeline
 
+    # Note: No object detector added - face-only mode
+
+    print("🎭 Face detection loaded:")
+    print("   - Face recognition (your face clear)")
+    print("   - Face blurring (other faces blurred)")
+
     try:
-        # Start virtual camera stream
+        # Start virtual camera stream with face-only privacy
         loop.run(use_virtual_camera=True)
     except KeyboardInterrupt:
         print("\n🛑 Stopped by user")
     except Exception as e:
         print(f"❌ Error: {e}")
+        print("💡 Make sure OBS Studio is installed for virtual camera")
     finally:
         loop.stop()
-        print("Virtual camera stream stopped")
+        print("\n🔚 Virtual camera stream stopped")
+        print("🎯 Face privacy protection disabled")
+        print("="*60)
 
 if __name__ == "__main__":
-    print("🎭 BlurBerry AI - Face Recognition Virtual Camera")
-    print("=" * 60)
+    print("🎭 BlurBerry AI - Face-Only Privacy Virtual Camera")
+    print("="*60)
     
     # Check virtual camera availability
     if not VIRTUAL_CAMERA_AVAILABLE:
@@ -175,5 +226,5 @@ if __name__ == "__main__":
         if response != 'y':
             sys.exit(0)
     
-    # Run face recognition test
-    test_face_recognition()
+    # Run face-only virtual camera
+    face_only_virtual_camera()

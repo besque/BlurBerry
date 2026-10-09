@@ -1,4 +1,4 @@
-# shared_types.py — Person 1 creates this file
+"""Detection and config types shared by the video pipeline."""
 from dataclasses import dataclass, field
 from typing import Tuple, Literal
 

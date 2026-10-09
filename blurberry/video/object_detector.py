@@ -19,8 +19,7 @@ import numpy as np
 from ultralytics import YOLO
 from typing import List, Optional, Tuple
 import os, sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from shared_types import DetectionEvent
+from blurberry.shared_types import DetectionEvent
 
 
 # ─── Config ───────────────────────────────────────────────────────────────────
@@ -66,6 +65,8 @@ CARD_NAMES = {
     "identity_card", "valid-credit-card",
 }
 
+MODELS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models")
+
 INFERENCE_SIZE = 640      # px — detection resolution; matches training imgsz
 USE_SHAPE_FALLBACK = False
 MOTION_THRESH  = 0.003    # mean pixel diff / 255 to trigger re-detection
@@ -84,16 +85,34 @@ def _mps_available() -> bool:
         return False
 
 
+def _cuda_available() -> bool:
+    try:
+        import torch
+        return torch.cuda.is_available()
+    except Exception:
+        return False
+
+
 def _load(path: str) -> Tuple[Optional[YOLO], str]:
     """
-    Return (model, device), preferring the fastest format available.
-    CoreML packages are exported with:
-        yolo export model=<name>.pt format=coreml imgsz=384,640 half=True
+    Return (model, device), preferring the fastest format available:
+      macOS          CoreML package (Neural Engine)
+      NVIDIA GPU     .pt on CUDA
+      other CPUs     640x384 ONNX (ONNX Runtime; ~25% faster than .pt on CPU)
+    download_models.py builds the CoreML package on macOS and the 640x384 ONNX
+    elsewhere; the release .onnx is fixed at 480x480, below the trained 640.
     """
     mlpackage = path.replace(".pt", ".mlpackage")
     if sys.platform == "darwin" and os.path.exists(mlpackage):
         print(f"[ObjDet] CoreML loaded: {mlpackage}")
         return YOLO(mlpackage, task="detect"), "cpu"   # CoreML picks ANE/GPU itself
+    if os.path.exists(path) and _cuda_available():
+        print(f"[ObjDet] PT loaded (cuda): {path}")
+        return YOLO(path), "cuda"
+    wide_onnx = path.replace(".pt", "_384x640.onnx")
+    if os.path.exists(wide_onnx):
+        print(f"[ObjDet] ONNX loaded: {wide_onnx}")
+        return YOLO(wide_onnx, task="detect"), "cpu"
     if os.path.exists(path):
         device = "mps" if _mps_available() else "cpu"
         print(f"[ObjDet] PT loaded ({device}): {path}")
@@ -124,6 +143,66 @@ def _map_back(inv: np.ndarray, x1, y1, x2, y2) -> Tuple[float, float, float, flo
     corners = np.array([[x1, y1, 1], [x2, y1, 1], [x2, y2, 1], [x1, y2, 1]], dtype=np.float64)
     pts = corners @ inv.T
     return pts[:, 0].min(), pts[:, 1].min(), pts[:, 0].max(), pts[:, 1].max()
+
+
+REFINE_CARDS     = True
+CARD_ASPECT      = 85.6 / 54
+REFINE_MIN_KEEP  = 0.40   # a refined box smaller than this share of the model's box is
+                          # treated as a failed cut and the model's box is kept
+
+
+def _refine_box(frame: np.ndarray, box) -> Tuple[int, int, int, int]:
+    """Shrink a detector box to the object inside it. The card model boxes a
+    hand-held card loosely (fingers, lanyard, background). GrabCut, seeded with
+    the box, separates the card from what's around it; if the cut looks wrong,
+    the original box is returned, so this can only tighten, never uncover."""
+    x1, y1, x2, y2 = box
+    h, w = frame.shape[:2]
+    bw, bh = x2 - x1, y2 - y1
+    if bw < 24 or bh < 24:
+        return box
+    # Work on a small copy with a margin of background around the box
+    mx, my = int(bw * 0.15), int(bh * 0.15)
+    cx1, cy1, cx2, cy2 = max(0, x1 - mx), max(0, y1 - my), min(w, x2 + mx), min(h, y2 + my)
+    crop = frame[cy1:cy2, cx1:cx2]
+    scale = min(1.0, 120 / max(crop.shape[:2]))
+    small = cv2.resize(crop, (max(1, int(crop.shape[1] * scale)), max(1, int(crop.shape[0] * scale))),
+                       interpolation=cv2.INTER_AREA)
+    rect = (int((x1 - cx1) * scale), int((y1 - cy1) * scale),
+            max(1, int(bw * scale)), max(1, int(bh * scale)))
+    mask = np.zeros(small.shape[:2], np.uint8)
+    try:
+        cv2.grabCut(small, mask, rect, np.zeros((1, 65), np.float64), np.zeros((1, 65), np.float64),
+                    2, cv2.GC_INIT_WITH_RECT)
+    except cv2.error:
+        return box
+    fg = ((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD)).astype(np.uint8)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(fg)
+    if n < 2:
+        return box
+    i = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    fx, fy, fw, fh = stats[i, :4]
+    rx1, ry1 = cx1 + int(fx / scale), cy1 + int(fy / scale)
+    rx2, ry2 = cx1 + int((fx + fw) / scale), cy1 + int((fy + fh) / scale)
+    fw_px, fh_px = rx2 - rx1, ry2 - ry1
+    if fw_px <= 0 or fh_px <= 0:
+        return box
+    # ID and bank cards are all 85.6 x 54 mm (long side 1.586x the short one). A cut
+    # that's too short on one axis sliced off a coloured band or a gripped edge on
+    # some side; we can't tell which, so grow that axis by the full shortfall both ways.
+    long_px, short_px = max(fw_px, fh_px), min(fw_px, fh_px)
+    grow_long = max(0.0, short_px * CARD_ASPECT - long_px)
+    grow_short = max(0.0, long_px / CARD_ASPECT - short_px)
+    gx, gy = (grow_long, grow_short) if fw_px >= fh_px else (grow_short, grow_long)
+    m = 0.05 * long_px
+    rx1, rx2 = rx1 - gx - m, rx2 + gx + m
+    ry1, ry2 = ry1 - gy - m, ry2 + gy + m
+    # Never grow past the model's box, and reject cuts that lost most of it
+    rx1, ry1 = int(max(rx1, x1)), int(max(ry1, y1))
+    rx2, ry2 = int(min(rx2, x2)), int(min(ry2, y2))
+    if (rx2 - rx1) * (ry2 - ry1) < REFINE_MIN_KEEP * bw * bh:
+        return box
+    return rx1, ry1, rx2, ry2
 
 
 def _plausible(etype: str, box, w: int, h: int) -> bool:
@@ -187,8 +266,8 @@ def _classify(name: str, default: str) -> str:
 class PlateCardDetector:
     def __init__(
         self,
-        plate_model_path: str = "blurberry/models/plate_best.pt",
-        card_model_path:  str = "blurberry/models/card_best.pt",
+        plate_model_path: str = os.path.join(MODELS_DIR, "plate_best.pt"),
+        card_model_path:  str = os.path.join(MODELS_DIR, "card_best.pt"),
     ):
         self.plate_model, self.plate_device = _load(plate_model_path)
         self.card_model,  self.card_device  = _load(card_model_path)
@@ -253,6 +332,8 @@ class PlateCardDetector:
                 x2, y2 = int(min(w, x2)), int(min(h, y2))
                 if not _plausible(etype, (x1, y1, x2, y2), w, h):
                     continue
+                if etype == "card" and REFINE_CARDS:
+                    x1, y1, x2, y2 = _refine_box(frame, (x1, y1, x2, y2))
 
                 pad = BBOX_PAD.get(etype, 8)
                 x1 = max(0, x1 - pad);  y1 = max(0, y1 - pad)

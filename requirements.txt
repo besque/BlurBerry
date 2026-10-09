@@ -2,13 +2,14 @@ opencv-python
 numpy
 flask
 
-# Face recognition
+# Face recognition (on Windows, insightface builds from source: needs the Microsoft C++ Build Tools)
 insightface
 onnxruntime
 
 # Object detection
 ultralytics
 coremltools; sys_platform == "darwin"   # CoreML export for the Neural Engine
+onnx; sys_platform != "darwin"          # 640x384 ONNX export for CPUs
 
 # NSFW detection
 nudenet
@@ -17,9 +18,8 @@ nudenet
 filterpy
 scipy
 
-# Screen / Windows integration
+# Screen capture
 mss
-pywin32; sys_platform == "win32"
 
 # Optional: virtual camera output (OBS Virtual Camera)
 pyvirtualcam
@@ -28,6 +28,21 @@ pyvirtualcam
 pyobjc-framework-Quartz; sys_platform == "darwin"
 pyobjc-framework-AVFoundation; sys_platform == "darwin"
 
-# OCR for text PII: Apple Vision on macOS; elsewhere EasyOCR (or PaddleOCR if installed)
+# Windows: window list for screen share, camera list to skip virtual cameras
+pywin32; sys_platform == "win32"
+pygrabber; sys_platform == "win32"
+
+# Voice PII: streaming speech recognition, mic in / virtual mic out
+vosk
+sounddevice
+
+# OCR for text PII: the OS's own engine on macOS (Vision) and Windows (Windows.Media.Ocr);
+# EasyOCR as the fallback, and elsewhere (or PaddleOCR if installed)
 pyobjc-framework-Vision; sys_platform == "darwin"
+winrt-Windows.Media.Ocr; sys_platform == "win32"
+winrt-Windows.Graphics.Imaging; sys_platform == "win32"
+winrt-Windows.Storage.Streams; sys_platform == "win32"
+winrt-Windows.Globalization; sys_platform == "win32"
+winrt-Windows.Foundation; sys_platform == "win32"
+winrt-Windows.Foundation.Collections; sys_platform == "win32"
 easyocr; sys_platform != "darwin"

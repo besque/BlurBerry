@@ -1,14 +1,18 @@
 import cv2, sys, time
-sys.path.insert(0, ".")
-from shared_types import PipelineConfig
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from blurberry.shared_types import PipelineConfig
 from blurberry.video.tracker import MultiObjectTracker
 from blurberry.video.object_detector import PlateCardDetector
 from blurberry.video.blur_compositor import apply_blurs
+from blurberry.video.camera import configured_source, open_camera
+
+CAMERA = configured_source()
 
 config  = PipelineConfig()
 tracker = MultiObjectTracker(max_age=45, min_hits=1, iou_threshold=0.25)
 det     = PlateCardDetector()
-cap     = cv2.VideoCapture(0)
+cap     = open_camera(CAMERA)
 frame_id = 0
 
 print("Hold a license plate or card to camera. Move it around. Press Q to quit.")

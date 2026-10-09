@@ -15,13 +15,15 @@ import time
 import os
 from datetime import datetime
 
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from shared_types import PipelineConfig
+from blurberry.shared_types import PipelineConfig
 from blurberry.video.virtual_video_loop import VirtualVideoLoop
 from blurberry.video.face_pipeline import FacePipeline
 from blurberry.video.object_detector import PlateCardDetector
+from blurberry.video.camera import configured_source, open_camera
+
+CAMERA = configured_source()
 
 # Virtual camera import
 try:
@@ -68,7 +70,7 @@ def complete_virtual_camera():
     face_pipeline = FacePipeline(config)
 
     # Setup camera for enrollment
-    cap = cv2.VideoCapture(0)
+    cap = open_camera(CAMERA)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
@@ -193,7 +195,7 @@ def complete_virtual_camera():
     print("="*60)
 
     # Create virtual video loop
-    loop = VirtualVideoLoop(config, source=0, debug=False)
+    loop = VirtualVideoLoop(config, source=CAMERA, debug=False)
 
     # Pass the already-enrolled face pipeline into the loop
     loop.face_pipeline = face_pipeline
